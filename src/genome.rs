@@ -1,49 +1,42 @@
+use crate::neural_network;
+use crate::neural_network::Input;
+use bevy::reflect::erased_serde::serialize_trait_object;
 use bit_vec::BitVec;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use rand::distributions::{Distribution, Standard};
 use rand::Rng;
+use variant_count::VariantCount;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
-pub enum NeuronConnectionType {
-    InternalInput = 0,
-    InternalOutput,
-    InternalInternal,
-    InputOutput,
-}
-
-impl Distribution<NeuronConnectionType> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> NeuronConnectionType {
-        FromPrimitive::from_u8(rng.gen_range(0..4)).unwrap()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Gene {
-    weight: u16,
-    input_number: u8,
-    output_number: u8,
-    connection: NeuronConnectionType,
+    weight: i16,
+    input_index: u8,
+    output_index: u8,
+    from_internal: bool,
+    to_internal: bool,
 }
 
 impl Distribution<Gene> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Gene {
-        Gene::new(rng.gen(), rng.gen(), rng.gen(), rng.gen())
+        Gene::new(rng.gen(), rng.gen(), rng.gen(), rng.gen(), rng.gen())
     }
 }
 
 impl Gene {
     fn new(
-        weight: u16,
-        input_number: u8,
-        output_number: u8,
-        connection: NeuronConnectionType,
+        weight: i16,
+        input_index: u8,
+        output_index: u8,
+        from_internal: bool,
+        to_internal: bool,
     ) -> Gene {
         Gene {
             weight,
-            input_number,
-            output_number,
-            connection,
+            input_index,
+            output_index,
+            from_internal,
+            to_internal,
         }
     }
 
@@ -51,20 +44,24 @@ impl Gene {
         rand::thread_rng().gen()
     }
 
-    pub fn weight(&self) -> u16 {
+    pub fn weight(&self) -> i16 {
         self.weight
     }
 
-    pub fn input_number(&self) -> u8 {
-        self.input_number
+    pub fn input_index(&self) -> usize {
+        self.input_index as usize
     }
 
-    pub fn output_number(&self) -> u8 {
-        self.output_number
+    pub fn output_index(&self) -> usize {
+        self.output_index as usize
     }
 
-    pub fn connection(&self) -> NeuronConnectionType {
-        self.connection
+    pub fn is_from_internal(&self) -> bool {
+        self.from_internal
+    }
+
+    pub fn is_to_internal(&self) -> bool {
+        self.to_internal
     }
 
     pub fn mutated(&self) -> Gene {
@@ -77,24 +74,24 @@ impl Gene {
     }
 
     fn to_bits(&self) -> BitVec {
-        let mut bits = BitVec::from_elem(16 + 8 + 8 + 2, false);
+        let mut bits = BitVec::from_elem(16 + 8 + 8 + 1 + 1, false);
         let mut count = 0;
         for i in 0..16 {
             bits.set(count, (self.weight >> i) & 1 == 1);
             count += 1;
         }
         for i in 0..8 {
-            bits.set(count, (self.input_number >> i) & 1 == 1);
+            bits.set(count, (self.input_index >> i) & 1 == 1);
             count += 1;
         }
         for i in 0..8 {
-            bits.set(count, (self.output_number >> i) & 1 == 1);
+            bits.set(count, (self.output_index >> i) & 1 == 1);
             count += 1;
         }
-        for i in 0..2 {
-            bits.set(count, (self.connection as u8 >> i) & 1 == 1);
-            count += 1;
-        }
+        bits.set(count, self.from_internal);
+        count += 1;
+        bits.set(count, self.to_internal);
+        count += 1;
         bits
     }
 
@@ -103,39 +100,26 @@ impl Gene {
         let mut gene = Gene::default();
 
         for i in 0..16 {
-            gene.weight |= (bits[count] as u16) << i;
+            gene.weight |= (bits[count] as i16) << i;
             count += 1;
         }
 
         for i in 0..8 {
-            gene.input_number |= (bits[count] as u8) << i;
+            gene.input_index |= (bits[count] as u8) << i;
             count += 1;
         }
 
         for i in 0..8 {
-            gene.output_number |= (bits[count] as u8) << i;
+            gene.output_index |= (bits[count] as u8) << i;
             count += 1;
         }
 
-        let mut num = 0;
-        for i in 0..2 {
-            num |= (bits[count] as u8) << i;
-            count += 1;
-        }
-        gene.connection = NeuronConnectionType::from_u8(num).unwrap();
+        gene.from_internal = bits[count];
+        count += 1;
+        gene.to_internal = bits[count];
+        count += 1;
 
         gene
-    }
-}
-
-impl Default for Gene {
-    fn default() -> Self {
-        Gene {
-            weight: 0,
-            input_number: 0,
-            output_number: 0,
-            connection: NeuronConnectionType::InternalInternal,
-        }
     }
 }
 
@@ -145,11 +129,11 @@ pub struct Genome {
 }
 
 impl Genome {
-    fn new(genes: Vec<Gene>) -> Genome {
+    pub fn new(genes: Vec<Gene>) -> Genome {
         Genome { genes }
     }
 
-    fn random(size: usize) -> Genome {
+    pub fn random(size: usize) -> Genome {
         let mut genes = Vec::with_capacity(size);
         for _ in 0..size {
             genes.push(Gene::random());
@@ -157,8 +141,12 @@ impl Genome {
         Genome::new(genes)
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.genes.len()
+    }
+
+    pub fn genes(&self) -> impl Iterator<Item = &Gene> {
+        self.genes.iter()
     }
 }
 
@@ -166,17 +154,16 @@ mod test {
     #[test]
     fn bits_to_from() {
         use super::Gene;
-        use super::NeuronConnectionType;
         use bit_vec::BitVec;
 
         fn test_bits(gene: Gene) {
             let bits = gene.to_bits();
-            let gene2 = Gene::from_bits(&bits);
-            assert_eq!(gene, gene2);
+            let from_bits = Gene::from_bits(&bits);
+            assert_eq!(gene, from_bits);
         }
 
-        let gene = Gene::new(0x1234, 0x5, 0x6, NeuronConnectionType::InputOutput);
-        let gene2 = Gene::new(666, 123, 44, NeuronConnectionType::InternalInternal);
+        let gene = Gene::new(0x1234, 0x5, 0x6, true, false);
+        let gene2 = Gene::new(666, 123, 44, false, false);
         test_bits(gene);
         test_bits(gene2);
     }

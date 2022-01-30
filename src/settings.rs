@@ -1,5 +1,3 @@
-use once_cell::sync::Lazy;
-
 pub struct Settings {
     pub specimen_size: f32,
     pub world_size: f32,
@@ -19,7 +17,7 @@ impl Default for Settings {
             world_half_size: 0.0,
             population: 100,
             mutation_chance: 0.01,
-            turns_per_generation: 100,
+            turns_per_generation: 1000,
             proximity_distance: 3.0,
             default_longprobe_distance: 10.0,
         };
@@ -27,5 +25,3 @@ impl Default for Settings {
         settings
     }
 }
-
-pub static SETTINGS: Lazy<Settings> = Lazy::new(|| Settings::default());

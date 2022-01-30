@@ -1,12 +1,10 @@
 use crate::genome::Genome;
 use crate::neural_network::NeuralNetwork;
-use cgmath::{Point2, Rad};
+use bevy::ecs::prelude::*;
+use parry2d::na::{Point2, Rotation2};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Component)]
 pub struct SpecimenData {
-    pub position: Point2<f32>,
-    pub rotation: Rad<f32>,
-    pub move_successful: bool,
     pub oscillator1_period: f32,
     pub oscillator2_period: f32,
     pub oscillator3_period: f32,
@@ -16,15 +14,11 @@ pub struct SpecimenData {
     pub memory1: f32,
     pub memory2: f32,
     pub memory3: f32,
-    pub speed: f32,
 }
 
 impl Default for SpecimenData {
     fn default() -> Self {
         SpecimenData {
-            position: Point2::new(0.0, 0.0),
-            rotation: Rad(0.0),
-            move_successful: false,
             oscillator1_period: 0.0,
             oscillator2_period: 0.0,
             oscillator3_period: 0.0,
@@ -34,26 +28,19 @@ impl Default for SpecimenData {
             memory1: 0.0,
             memory2: 0.0,
             memory3: 0.0,
-            speed: 0.0,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Component)]
+pub struct Speed(pub f32);
+
+#[derive(Component)]
+pub struct Alive;
+
 pub struct Specimen {
     data: SpecimenData,
     dead: bool,
     genome: Genome,
     brain: NeuralNetwork,
-}
-
-impl Specimen {
-    fn new(data: SpecimenData, genome: Genome) -> Self {
-        Specimen {
-            data,
-            dead: false,
-            genome,
-            brain: NeuralNetwork {}// genome.network(),
-        }
-    }
 }
