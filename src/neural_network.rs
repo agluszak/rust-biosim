@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use num_derive::FromPrimitive;
 use variant_count::VariantCount;
 
 use crate::genome::Genome;
 
 type NeuronId = usize;
 type Priority = usize;
-type Weight = f64;
+type Weight = f32;
 type Neighbors = HashMap<NeuronId, Vec<NeuronId>>;
 type Weights<T> = HashMap<T, Weight>;
 type InternalInternal = (NeuronId, NeuronId);
@@ -18,9 +17,9 @@ type InputOutput = (Input, Output);
 #[derive(Debug, Clone)]
 struct Neuron {
     internal_inputs: Vec<(NeuronId, Weight)>,
-    self_weight: f64,
-    value: f64,
-    previous_value: f64,
+    self_weight: f32,
+    value: f32,
+    previous_value: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -35,20 +34,17 @@ pub struct NeuralNetwork {
 const MAX_WEIGHT: Weight = i16::MAX as Weight;
 
 impl NeuralNetwork {
-    pub fn think(&mut self, input_values: &HashMap<Input, f64>) -> HashMap<Output, f64> {
+    pub fn think(&mut self, input_values: &HashMap<Input, f32>) -> HashMap<Output, f32> {
         let mut outputs = HashMap::new();
 
         for ((input, output), &weight) in self.input_output_weights.iter() {
-            let input_value = *input_values.get(input).unwrap_or(&0.0);
+            let input_value = input_values.get(input).copied().unwrap_or(0.0);
             *outputs.entry(*output).or_insert(0.0) += input_value * weight;
         }
 
-        dbg!(&self.input_internal_weights);
-        dbg!(&self.internal_output_weights);
-        dbg!(&self.neurons);
-        for ((input, neuron_id), weight) in self.input_internal_weights.iter() {
+        for ((input, neuron_id), &weight) in self.input_internal_weights.iter() {
             let neuron = self.neurons.get_mut(neuron_id).unwrap();
-            neuron.value += input_values.get(input).copied().unwrap_or_default() * *weight;
+            neuron.value += input_values.get(input).copied().unwrap_or(0.0) * weight;
         }
 
         for &neuron_id in self.computation_order.iter() {
@@ -60,6 +56,7 @@ impl NeuralNetwork {
             neuron.value += neuron.self_weight * neuron.previous_value;
             neuron.value = neuron.value.tanh();
             neuron.previous_value = neuron.value;
+            self.neurons.insert(neuron_id, neuron);
         }
 
         for ((neuron_id, output), &weight) in self.internal_output_weights.iter() {
@@ -133,7 +130,7 @@ impl NeuralNetwork {
         mut input_internal_weights: Weights<InputInternal>,
         mut internal_output_weights: Weights<InternalOutput>,
         mut internal_internal_weights: Weights<InternalInternal>,
-        mut input_output_weights: Weights<InputOutput>,
+        input_output_weights: Weights<InputOutput>,
     ) -> NeuralNetwork {
         // Remove edges that are not connected to any output
 
@@ -195,7 +192,7 @@ impl NeuralNetwork {
                 neighbors.remove(self_pos);
                 *internal_internal_weights
                     .get(&(neuron_id, neuron_id))
-                    .unwrap() as f64
+                    .unwrap() as f32
                     / MAX_WEIGHT
             } else {
                 0.0
@@ -273,7 +270,7 @@ impl NeuralNetwork {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, VariantCount)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, VariantCount)]
 pub enum Input {
     PosX,
     PosY,
@@ -289,30 +286,24 @@ pub enum Input {
     Oscillator1, // PI * time * 5 / max_time
     Oscillator2, // PI * time * 25 / max_time
     Oscillator3, // PI * time * 125 / max_time
-    Memory1,
-    Memory2,
-    Memory3,
+    Memory(usize),
     // Energy,
     // Health,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, VariantCount)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, VariantCount)]
 pub enum Output {
     // Actions
     Move,
     Turn,
-    Remember1,
-    Remember2,
-    Remember3,
+    Remember(usize),
     ChangeSpeed,
     // Analog values
-    SetSpeed,
-    SetDirection,
-    SetMemory1,
-    SetMemory2,
-    SetMemory3,
-    SetOscillator1Period,
-    SetOscillator2Period,
-    SetOscillator3Period,
-    SetLongProbeDistance,
+    DesiredSpeed,
+    DesiredDirection,
+    DesiredMemory(usize),
+    DesiredFastOscillatorPeriod,
+    DesiredMediumOscillatorPeriod,
+    DesiredSlowOscillatorPeriod,
+    DesiredLongProbeDistance,
 }

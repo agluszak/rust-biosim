@@ -3,16 +3,35 @@ mod neural_network;
 mod settings;
 mod specimen;
 
-use bevy::prelude::*;
-use bevy_prototype_lyon::entity::ShapeBundle;
+use crate::settings::{Settings, MEMORY_SIZE};
+use crate::specimen::{
+    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, Direction, Genome, Memory,
+    NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, SpecimenBundle,
+    SpeedMultiplier,
+};
+use bevy::app::{App, CoreStage};
+use bevy::ecs::prelude::*;
+use bevy::prelude::{AssetServer, Msaa, Text, Transform, Vec3, WindowDescriptor};
+use bevy::tasks::ComputeTaskPool;
+use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
 use parry2d::na::distance;
 use rand::random;
-use std::collections::HashMap;
+use std::time::Instant;
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, StageLabel)]
+struct GenerationChangeStage;
 
 fn main() {
     App::new()
         .insert_resource(Msaa { samples: 4 })
+        .insert_resource(WindowDescriptor {
+            title: "Turbo Evolution Giga Simulator".to_string(),
+            width: 550.,
+            height: 550.,
+            vsync: true,
+            ..Default::default()
+        })
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
         .add_startup_system(setup_system)
@@ -21,310 +40,325 @@ fn main() {
         .add_system(brain_input_collection_system)
         .add_system(thinking_system)
         .add_system(doing_system)
+        .add_system(time_system)
+        .add_system(text_update_system)
+        .add_stage_before(
+            CoreStage::Update,
+            GenerationChangeStage,
+            SystemStage::parallel(),
+        )
+        .add_system_to_stage(GenerationChangeStage, new_generation_system)
         .run();
-}
-
-#[derive(Component)]
-struct Speed(f32);
-
-#[derive(Component)]
-struct Size(f32);
-
-#[derive(Component)]
-struct Position(parry2d::na::Point2<f32>);
-
-#[derive(Component)]
-struct Direction(parry2d::na::Rotation2<f32>);
-
-#[derive(Component)]
-struct Age(u32);
-
-#[derive(Component)]
-struct Birthplace(parry2d::na::Point2<f32>);
-
-#[derive(Component)]
-struct Memory([f64; 3]);
-
-#[derive(Component)]
-struct Oscillator([f64; 3]);
-
-#[derive(Component)]
-struct Genome(genome::Genome);
-
-#[derive(Component)]
-struct Brain(neural_network::NeuralNetwork);
-
-#[derive(Component)]
-struct Alive;
-
-#[derive(Component, Default)]
-struct BrainInputs(HashMap<neural_network::Input, f64>);
-
-impl BrainInputs {
-    fn add(&mut self, input: neural_network::Input, value: f64) {
-        assert!(value >= -1.0 && value <= 1.0);
-        self.0.insert(input, value);
-    }
-
-    fn read(&self) -> &HashMap<neural_network::Input, f64> {
-        &self.0
-    }
-}
-
-#[derive(Component, Default)]
-struct BrainOutputs(HashMap<neural_network::Output, f64>);
-
-impl BrainOutputs {
-    fn set(&mut self, outputs: HashMap<neural_network::Output, f64>) {
-        self.0 = outputs;
-    }
-
-    fn get(&self, output: neural_network::Output) -> f64 {
-        self.0.get(&output).copied().unwrap_or(0.0)
-    }
-
-    fn activated(&self, output: neural_network::Output) -> bool {
-        self.get(output) > 0.5 // TODO make this configurable
-    }
-}
-
-#[derive(Bundle)]
-struct SpecimenBundle {
-    speed: Speed,
-    position: Position,
-    direction: Direction,
-    birthplace: Birthplace,
-    memory: Memory,
-    oscillator: Oscillator,
-    genome: Genome,
-    brain: Brain,
-    brain_inputs: BrainInputs,
-    brain_outputs: BrainOutputs,
-    alive: Alive,
-    #[bundle]
-    shape_bundle: ShapeBundle,
 }
 
 #[derive(Component)]
 struct WantsToMove;
 
-fn map_range(value: f64, from_min: f64, from_max: f64, to_min: f64, to_max: f64) -> f64 {
-    assert!(from_min < from_max);
-    assert!(to_min < to_max);
+#[derive(Component)]
+struct Turn(u32);
+
+#[derive(Component)]
+struct Generation(u32);
+
+#[derive(Component)]
+struct GenerationStartTime(std::time::Instant);
+
+#[derive(Component)]
+struct TurnText;
+
+#[inline]
+fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> f32 {
+    assert!(from_min <= from_max);
+    assert!(to_min <= to_max);
     assert!(value >= from_min && value <= from_max);
     let value = (value - from_min) / (from_max - from_min) * (to_max - to_min) + to_min;
     assert!(value >= to_min && value <= to_max);
     value
 }
 
-fn normalize(value: f64, min: f64, max: f64) -> f64 {
-    map_range(value, min, max, -1.0, 1.0)
-}
-
 fn brain_input_collection_system(
     mut query: Query<(
         &mut BrainInputs,
         &Position,
-        &Speed,
+        &SpeedMultiplier,
         &Direction,
         &Birthplace,
+        &Oscillator,
+        &PreviousPosition,
+        &Memory,
         With<Alive>,
     )>,
+    turn: Res<Turn>,
+    settings: Res<Settings>,
 ) {
-    for (mut brain_inputs, position, speed, direction, birthplace, _) in &mut query.iter_mut() {
+    use neural_network::Input;
+    for (
+        mut brain_inputs,
+        position,
+        speed,
+        direction,
+        birthplace,
+        oscillator,
+        previous_position,
+        memory,
+        _,
+    ) in &mut query.iter_mut()
+    {
         brain_inputs.add(
-            neural_network::Input::PosX,
-            normalize(position.0.x as f64, -50.0, 50.0),
-        ); // TODO: use a res for world size
-        brain_inputs.add(
-            neural_network::Input::PosY,
-            normalize(position.0.y as f64, -50.0, 50.0),
-        );
-        brain_inputs.add(
-            neural_network::Input::Speed,
-            normalize(speed.0 as f64, 0.5, 2.0),
-        );
-        brain_inputs.add(
-            neural_network::Input::Direction,
-            direction.0.angle().sin() as f64,
-        );
-        brain_inputs.add(
-            neural_network::Input::DistanceToBirthplace,
-            normalize(
-                distance(&birthplace.0, &position.0) as f64,
-                0.0,
-                20000.0f64.sqrt(),
+            Input::PosX,
+            NeuronValue::from_linear(
+                position.0.x,
+                -settings.world_half_size,
+                settings.world_half_size,
             ),
-            // TODO: use a res for world size
         );
-        brain_inputs.add(neural_network::Input::Random, normalize(random(), 0.0, 1.0));
+        brain_inputs.add(
+            Input::PosY,
+            NeuronValue::from_linear(
+                position.0.y,
+                -settings.world_half_size,
+                settings.world_half_size,
+            ),
+        );
+        brain_inputs.add(Input::Speed, speed.as_neuron_value());
+        brain_inputs.add(Input::Direction, direction.as_neuron_value());
+        brain_inputs.add(
+            Input::DistanceToBirthplace,
+            NeuronValue::from_linear(
+                distance(&birthplace.0, &position.0),
+                0.0,
+                settings.world_size * std::f32::consts::SQRT_2,
+            ),
+        );
+        brain_inputs.add(Input::Random, NeuronValue::from_linear(random(), 0.0, 1.0));
+        brain_inputs.add(
+            Input::DistanceTravelled,
+            NeuronValue::from_linear(
+                distance(&position.0, &previous_position.0),
+                0.0,
+                settings.base_speed * 2.0, // TODO use actual speed (need to use previous value)
+            ),
+        );
+        brain_inputs.add(
+            Input::Age,
+            NeuronValue::from_linear(
+                turn.0 as f32 / settings.turns_per_generation as f32,
+                // TODO use age
+                0.0,
+                1.0,
+            ),
+        );
+        for i in 0..MEMORY_SIZE {
+            brain_inputs.add(Input::Memory(i), NeuronValue::new(memory.0[i]));
+        }
     }
 }
 
-fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>) {
-    for (mut brain, brain_inputs, mut brain_outputs) in &mut query.iter_mut() {
-        let outputs = brain.0.think(brain_inputs.read());
-        brain_outputs.set(outputs);
+fn new_generation_system(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    turn: Res<Turn>,
+    generation: Res<Generation>,
+    to_remove: Query<(Entity, With<Genome>)>,
+    alive: Query<(&Genome, &Position, With<Alive>)>,
+) {
+    if turn.0 == 0 {
+        if generation.0 == 0 {
+            // Initialize the first generation
+            for _ in 0..settings.population {
+                let genome = genome::Genome::random(settings.genome_length);
+                commands.spawn_bundle(SpecimenBundle::new(
+                    settings.world_size,
+                    Genome(genome),
+                    &settings.brain_inputs,
+                    &settings.brain_outputs,
+                    settings.internal_neurons,
+                ));
+            }
+        } else if alive.iter().count() < settings.population {
+            dbg!(alive.iter().count());
+            todo!()
+        } else {
+            // TODO
+            let genomes = alive
+                .iter()
+                .filter(|(_, position, _)| {
+                    position.0.x < settings.world_half_size / 2.0
+                        && position.0.x > -settings.world_half_size / 2.0
+                        && position.0.y < settings.world_half_size / 2.0
+                        && position.0.y > -settings.world_half_size / 2.0
+                })
+                .map(|(genome, _, _)| genome.0.clone())
+                .collect::<Vec<_>>();
+            println!("Generation {}: {}", generation.0, genomes.len());
+            for (entity, _) in to_remove.iter() {
+                commands.entity(entity).despawn();
+            }
+
+            use rand::seq::SliceRandom;
+
+            for _ in 0..settings.population {
+                let mut selected = genomes.choose_multiple(&mut rand::thread_rng(), 2);
+                let first = selected.next().unwrap();
+                let second = selected.next().unwrap();
+                let mut genome = genome::Genome::crossover(first, second);
+                genome.mutate(settings.mutation_chance);
+                commands.spawn_bundle(SpecimenBundle::new(
+                    settings.world_size,
+                    Genome(genome),
+                    &settings.brain_inputs,
+                    &settings.brain_outputs,
+                    settings.internal_neurons,
+                ));
+            }
+        }
     }
+}
+
+fn time_system(
+    mut turn: ResMut<Turn>,
+    mut generation: ResMut<Generation>,
+    mut generation_start: ResMut<GenerationStartTime>,
+    settings: Res<Settings>,
+    mut query: Query<(&mut Age,)>,
+) {
+    if turn.0 == settings.turns_per_generation {
+        generation.0 += 1;
+        turn.0 = 0;
+        println!("Time: {}", generation_start.0.elapsed().as_secs_f64());
+        generation_start.0 = Instant::now();
+    } else {
+        turn.0 += 1;
+        for (mut age,) in query.iter_mut() {
+            age.0 += 1;
+        }
+    }
+}
+
+fn thinking_system(
+    pool: Res<ComputeTaskPool>,
+    mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>,
+) {
+    query.par_for_each_mut(&pool, 1, |(mut brain, brain_inputs, mut brain_outputs)| {
+        let outputs = brain.0.think(brain_inputs.read());
+        *brain_outputs = BrainOutputs::from_hashmap(outputs);
+    });
 }
 
 fn doing_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &BrainOutputs, &mut Direction, &mut Speed)>,
+    mut query: Query<(
+        Entity,
+        &BrainOutputs,
+        &mut Direction,
+        &mut SpeedMultiplier,
+        &mut Memory,
+    )>,
 ) {
-    let mut done = false;
-    for (entity, brain_outputs, mut direction, mut speed) in &mut query.iter_mut() {
-        if !done {
-            done = true;
-            let current_direction = direction.0.angle();
-            let current_speed = speed.0;
-            let desired_speed = brain_outputs.get(neural_network::Output::ChangeSpeed);
-            let desired_speed = map_range(desired_speed, -1.0, 1.0, 0.5, 2.0);
-            let desired_direction = brain_outputs.get(neural_network::Output::SetDirection);
-            let desired_direction =
-                parry2d::na::Rotation2::new(desired_direction.asin() as f32).angle();
-            dbg!(
-                entity,
-                current_direction,
-                current_speed,
-                desired_speed,
-                desired_direction
-            );
-        }
-        if brain_outputs.activated(neural_network::Output::Move) {
+    use neural_network::Output;
+    for (entity, brain_outputs, mut direction, mut speed, mut memory) in &mut query.iter_mut() {
+        if brain_outputs.activated(Output::Move) {
             commands.entity(entity).insert(WantsToMove);
         }
-        if brain_outputs.activated(neural_network::Output::Turn) {
-            let output = brain_outputs.get(neural_network::Output::SetDirection);
-            direction.0 = parry2d::na::Rotation2::new(output.asin() as f32);
+        if brain_outputs.activated(Output::Turn) {
+            let output = brain_outputs.get(Output::DesiredDirection);
+            *direction = Direction::from_neuron_value(&output);
         }
-        if brain_outputs.activated(neural_network::Output::ChangeSpeed) {
-            let output = brain_outputs.get(neural_network::Output::ChangeSpeed);
-            speed.0 = map_range(output, -1.0, 1.0, 0.5, 2.0) as f32;
+        if brain_outputs.activated(Output::ChangeSpeed) {
+            let output = brain_outputs.get(Output::DesiredSpeed);
+            *speed = SpeedMultiplier::from_neuron_value(&output);
+        }
+        for i in 0..MEMORY_SIZE {
+            if brain_outputs.activated(Output::Remember(i)) {
+                let output = brain_outputs.get(Output::DesiredMemory(i));
+                memory.0[i] = output.value();
+            }
         }
     }
 }
 
 fn movement_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Position, &Speed, &Direction, With<WantsToMove>)>,
+    mut query: Query<(
+        Entity,
+        &mut Position,
+        &mut PreviousPosition,
+        &SpeedMultiplier,
+        &Direction,
+        With<WantsToMove>,
+    )>,
+    settings: Res<Settings>,
 ) {
-    for (entity, mut position, speed, direction, _) in query.iter_mut() {
-        position.0 += direction.0 * parry2d::na::Vector2::new(speed.0 * 10.0, 0.0);
-        position.0.x = position.0.x.max(-50.0).min(50.0);
-        position.0.y = position.0.y.max(-50.0).min(50.0);
+    for (entity, mut position, mut previous_position, speed, direction, _) in query.iter_mut() {
+        previous_position.0 = position.0;
+        position.0 += direction.0 * parry2d::na::Vector2::new(speed.0 * settings.base_speed, 0.0);
+        position.0.x = position
+            .0
+            .x
+            .max(-settings.world_half_size)
+            .min(settings.world_half_size);
+        position.0.y = position
+            .0
+            .y
+            .max(-settings.world_half_size)
+            .min(settings.world_half_size);
         commands.entity(entity).remove::<WantsToMove>();
-        // TODO: use a res for speed and world size
     }
 }
 
-fn display_system(mut query: Query<(&Position, &mut Transform)>) {
+fn text_update_system(
+    turn: Res<Turn>,
+    generation: Res<Generation>,
+    mut query: Query<&mut Text, With<TurnText>>,
+) {
+    for mut text in query.iter_mut() {
+        text.sections[0].value = format!("Generation: {}\nTurn: {}", generation.0, turn.0);
+    }
+}
+
+const DISPLAY_SCALE: f32 = 5.0;
+
+fn display_system(turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)>) {
     for (position, mut transform) in query.iter_mut() {
-        transform.translation = Vec3::new(position.0.x * 5.0, position.0.y * 5.0, 0.0);
-    }
-}
-
-impl SpecimenBundle {
-    // 100
-    fn new(
-        world_size: f32,
-        genome_length: usize,
-        inputs: &[neural_network::Input],
-        outputs: &[neural_network::Output],
-        internal_neurons: usize,
-    ) -> Self {
-        let speed = Speed(1.0); // TODO this is a speed multiplier
-        let position = Position(parry2d::na::Point2::new(
-            rand::random::<f32>() * world_size - world_size / 2.0,
-            rand::random::<f32>() * world_size - world_size / 2.0,
-        ));
-        let birthplace = Birthplace(position.0);
-        let direction = Direction(parry2d::na::Rotation2::new(
-            random::<f32>() * 2.0 * std::f32::consts::PI,
-        ));
-
-        let shape = shapes::Circle {
-            radius: 10.0,
-            center: Vec2::new(0.0, 0.0),
-        };
-
-        let shape_bundle = GeometryBuilder::build_as(
-            &shape,
-            DrawMode::Outlined {
-                fill_mode: FillMode::color(Color::rgb(random(), random(), random())),
-                outline_mode: StrokeMode::new(Color::BLACK, 1.0),
-            },
-            // TODO world scaling
-            Transform::from_translation(Vec3::new(position.0.x * 10.0, position.0.y * 10.0, 0.0)),
+        // TODO scale
+        transform.translation = Vec3::new(
+            position.0.x * DISPLAY_SCALE,
+            position.0.y * DISPLAY_SCALE,
+            0.0,
         );
-
-        let genome = Genome(genome::Genome::random(genome_length));
-        let brain = Brain(neural_network::NeuralNetwork::from_genome(
-            &genome.0,
-            inputs,
-            outputs,
-            internal_neurons,
-        ));
-
-        let brain_inputs = BrainInputs::default();
-        let brain_outputs = BrainOutputs::default();
-
-        SpecimenBundle {
-            speed,
-            position,
-            direction,
-            birthplace,
-            memory: Memory([0.0; 3]),
-            oscillator: Oscillator([0.0; 3]),
-            genome,
-            brain,
-            brain_inputs,
-            brain_outputs,
-            alive: Alive,
-            shape_bundle,
-        }
     }
 }
 
-fn setup_system(mut commands: Commands) {
+fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
+    use bevy::prelude::*;
+    commands.spawn_bundle(UiCameraBundle::default());
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-
-    // TODO
-    let inputs = {
-        use neural_network::Input;
-        [
-            Input::PosX,
-            Input::PosY,
-            Input::Direction,
-            Input::Speed,
-            // Input::Age,
-            Input::Random,
-            Input::DistanceToBirthplace,
-        ]
-    };
-
-    let outputs = {
-        use neural_network::Output;
-        [
-            Output::Move,
-            Output::Turn,
-            Output::ChangeSpeed,
-            Output::SetSpeed,
-            Output::SetDirection,
-        ]
-    };
-
-    let internal_neurons = 10;
-
-    let genome_length = 20;
-
-    for _ in 0..100 {
-        commands.spawn_bundle(SpecimenBundle::new(
-            100.0,
-            genome_length,
-            &inputs,
-            &outputs,
-            internal_neurons,
-        ));
-    }
+    commands.insert_resource(Settings::default());
+    commands.insert_resource(Turn(0));
+    commands.insert_resource(Generation(0));
+    commands.insert_resource(GenerationStartTime(Instant::now()));
+    commands
+        .spawn_bundle(TextBundle {
+            style: Style {
+                align_self: AlignSelf::FlexEnd,
+                position_type: PositionType::Absolute,
+                position: Rect {
+                    bottom: Val::Px(5.0),
+                    right: Val::Px(15.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            text: Text::with_section(
+                "",
+                TextStyle {
+                    font: asset_server.load("fonts/Roboto-Regular.ttf"),
+                    font_size: 100.0,
+                    color: Color::BLACK,
+                },
+                Default::default(),
+            ),
+            ..Default::default()
+        })
+        .insert(TurnText);
 }

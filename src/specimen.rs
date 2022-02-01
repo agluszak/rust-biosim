@@ -1,46 +1,268 @@
-use crate::genome::Genome;
-use crate::neural_network::NeuralNetwork;
-use bevy::ecs::prelude::*;
-use parry2d::na::{Point2, Rotation2};
+use crate::{genome, map_range, neural_network, MEMORY_SIZE};
+use bevy::prelude::*;
+use bevy_prototype_lyon::entity::ShapeBundle;
+use bevy_prototype_lyon::prelude::*;
+use rand::random;
+use std::collections::HashMap;
 
-#[derive(Component)]
-pub struct SpecimenData {
-    pub oscillator1_period: f32,
-    pub oscillator2_period: f32,
-    pub oscillator3_period: f32,
-    pub distance_traveled: f32,
-    pub birthplace: Point2<f32>,
-    pub longprobe_distance: f32,
-    pub memory1: f32,
-    pub memory2: f32,
-    pub memory3: f32,
+#[derive(Component, Debug)]
+pub struct SpeedMultiplier(pub f32);
+
+impl SpeedMultiplier {
+    const MAX: f32 = 2.0;
 }
 
-impl Default for SpecimenData {
+impl Default for SpeedMultiplier {
     fn default() -> Self {
-        SpecimenData {
-            oscillator1_period: 0.0,
-            oscillator2_period: 0.0,
-            oscillator3_period: 0.0,
-            distance_traveled: 0.0,
-            birthplace: Point2::new(0.0, 0.0),
-            longprobe_distance: 0.0,
-            memory1: 0.0,
-            memory2: 0.0,
-            memory3: 0.0,
-        }
+        SpeedMultiplier(1.0)
     }
 }
 
+impl NeuronValueConvertible for SpeedMultiplier {
+    fn from_neuron_value(neuron_value: &NeuronValue) -> Self {
+        SpeedMultiplier(neuron_value.as_multiplier(Self::MAX))
+    }
+
+    fn as_neuron_value(&self) -> NeuronValue {
+        NeuronValue::from_multiplier(self.0, Self::MAX)
+    }
+}
+
+#[derive(Component, Debug)]
+pub struct Size(pub f32);
+
+#[derive(Component, Debug)]
+pub struct Position(pub parry2d::na::Point2<f32>);
+
+#[derive(Component, Debug)]
+pub struct Direction(pub parry2d::na::Rotation2<f32>);
+
+#[derive(Component, Debug)]
+pub struct PreviousPosition(pub parry2d::na::Point2<f32>);
+
+impl Default for Direction {
+    fn default() -> Self {
+        Direction(parry2d::na::Rotation2::new(0.0))
+    }
+}
+
+impl NeuronValueConvertible for Direction {
+    fn from_neuron_value(neuron_value: &NeuronValue) -> Self {
+        Self(parry2d::na::Rotation2::new(
+            neuron_value.value() * std::f32::consts::PI,
+        ))
+    }
+
+    fn as_neuron_value(&self) -> NeuronValue {
+        NeuronValue::new(self.0.angle() / std::f32::consts::PI)
+    }
+}
+
+#[derive(Component, Debug)]
+pub struct Age(pub u32);
+
+#[derive(Component, Debug)]
+pub struct Birthplace(pub parry2d::na::Point2<f32>);
+
 #[derive(Component)]
-pub struct Speed(pub f32);
+pub struct Memory(pub [f32; MEMORY_SIZE]);
+
+#[derive(Component)]
+pub struct Oscillator(pub [f32; 3]);
+
+#[derive(Component)]
+pub struct Genome(pub genome::Genome);
+
+#[derive(Component)]
+pub struct Brain(pub neural_network::NeuralNetwork);
 
 #[derive(Component)]
 pub struct Alive;
 
-pub struct Specimen {
-    data: SpecimenData,
-    dead: bool,
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct NeuronInput(f32);
+
+#[derive(Component, Default)]
+pub struct BrainInputs(HashMap<neural_network::Input, f32>);
+
+impl BrainInputs {
+    pub fn add(&mut self, input: neural_network::Input, value: NeuronValue) {
+        self.0.insert(input, value.value());
+    }
+
+    pub fn read(&self) -> &HashMap<neural_network::Input, f32> {
+        &self.0
+    }
+}
+
+pub trait NeuronValueConvertible {
+    fn from_neuron_value(neuron_value: &NeuronValue) -> Self;
+    fn as_neuron_value(&self) -> NeuronValue;
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct NeuronValue(f32);
+
+impl NeuronValue {
+    const MIN: f32 = -1.0;
+    const MAX: f32 = 1.0;
+
+    pub fn new(value: f32) -> Self {
+        assert!((Self::MIN..=Self::MAX).contains(&value));
+        NeuronValue(value)
+    }
+
+    pub fn value(&self) -> f32 {
+        self.0
+    }
+
+    pub fn as_linear(&self, min: f32, max: f32) -> f32 {
+        map_range(self.0, Self::MIN, Self::MAX, min, max)
+    }
+
+    pub fn from_linear(value: f32, min: f32, max: f32) -> Self {
+        Self::new(map_range(value, min, max, Self::MIN, Self::MAX))
+    }
+
+    pub fn as_multiplier(&self, max: f32) -> f32 {
+        if self.0 < 0.0 {
+            map_range(self.0, Self::MIN, 0.0, 1.0 / max, 1.0)
+        } else if self.0 > 0.0 {
+            map_range(self.0, 0.0, Self::MAX, 1.0, max)
+        } else {
+            1.0
+        }
+    }
+
+    pub fn from_multiplier(multiplier: f32, max: f32) -> Self {
+        if multiplier < 1.0 {
+            NeuronValue::new(map_range(multiplier, 1.0 / max, 1.0, Self::MIN, 0.0))
+        } else if multiplier > 1.0 {
+            NeuronValue::new(map_range(multiplier, 1.0, max, 0.0, Self::MAX))
+        } else {
+            NeuronValue(0.0)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn neuron_value_from_to_multiplier(neuron_value: f32, max: f32) {
+        let from_value = NeuronValue::new(neuron_value);
+        let multiplier = from_value.as_multiplier(max);
+        let actual = NeuronValue::from_multiplier(multiplier, max);
+        assert!((actual.value() - neuron_value).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_neuron_value_from_to_multiplier() {
+        neuron_value_from_to_multiplier(0.0, 2.0);
+        neuron_value_from_to_multiplier(1.0, 2.0);
+        neuron_value_from_to_multiplier(-1.0, 2.0);
+        neuron_value_from_to_multiplier(0.33, 2.0);
+        neuron_value_from_to_multiplier(0.5, 2.0);
+        neuron_value_from_to_multiplier(0.66, 2.0);
+        neuron_value_from_to_multiplier(-0.33, 2.0);
+        neuron_value_from_to_multiplier(-0.5, 2.0);
+        neuron_value_from_to_multiplier(-0.66, 2.0);
+    }
+}
+
+#[derive(Component, Default)]
+pub struct BrainOutputs(HashMap<neural_network::Output, f32>);
+
+impl BrainOutputs {
+    pub fn from_hashmap(outputs: HashMap<neural_network::Output, f32>) -> Self {
+        BrainOutputs(outputs)
+    }
+
+    pub fn get(&self, output: neural_network::Output) -> NeuronValue {
+        NeuronValue::new(self.0.get(&output).copied().unwrap_or(0.0))
+    }
+
+    pub fn activated(&self, output: neural_network::Output) -> bool {
+        self.get(output).value() > 0.0 // TODO make this configurable
+    }
+}
+
+#[derive(Bundle)]
+pub struct SpecimenBundle {
+    speed: SpeedMultiplier,
+    position: Position,
+    previous_position: PreviousPosition,
+    direction: Direction,
+    birthplace: Birthplace,
+    memory: Memory,
+    oscillator: Oscillator,
     genome: Genome,
-    brain: NeuralNetwork,
+    brain: Brain,
+    brain_inputs: BrainInputs,
+    brain_outputs: BrainOutputs,
+    alive: Alive,
+    #[bundle]
+    shape_bundle: ShapeBundle,
+}
+
+impl SpecimenBundle {
+    pub fn new(
+        world_size: f32,
+        genome: Genome,
+        inputs: &[neural_network::Input],
+        outputs: &[neural_network::Output],
+        internal_neurons: usize,
+    ) -> Self {
+        let speed = SpeedMultiplier::default(); // TODO this is a speed multiplier
+        let position = Position(parry2d::na::Point2::new(
+            rand::random::<f32>() * world_size - world_size / 2.0,
+            rand::random::<f32>() * world_size - world_size / 2.0,
+        ));
+        let previous_position = PreviousPosition(position.0);
+        let birthplace = Birthplace(position.0);
+        let direction = Direction(parry2d::na::Rotation2::new(
+            random::<f32>() * 2.0 * std::f32::consts::PI,
+        ));
+
+        let shape = shapes::Circle {
+            radius: 10.0,
+            center: Vec2::new(0.0, 0.0),
+        };
+
+        let shape_bundle = GeometryBuilder::build_as(
+            &shape,
+            DrawMode::Outlined {
+                fill_mode: FillMode::color(Color::rgb(random(), random(), random())),
+                outline_mode: StrokeMode::new(Color::BLACK, 1.0),
+            },
+            // TODO world scaling
+            Transform::default(),
+        );
+
+        let brain = Brain(neural_network::NeuralNetwork::from_genome(
+            &genome.0,
+            inputs,
+            outputs,
+            internal_neurons,
+        ));
+
+        let brain_inputs = BrainInputs::default();
+        let brain_outputs = BrainOutputs::default();
+
+        SpecimenBundle {
+            speed,
+            position,
+            previous_position,
+            direction,
+            birthplace,
+            memory: Memory([0.0; MEMORY_SIZE]),
+            oscillator: Oscillator([1.0; 3]),
+            genome,
+            brain,
+            brain_inputs,
+            brain_outputs,
+            alive: Alive,
+            shape_bundle,
+        }
+    }
 }

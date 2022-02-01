@@ -1,12 +1,7 @@
-use crate::neural_network;
-use crate::neural_network::Input;
-use bevy::reflect::erased_serde::serialize_trait_object;
 use bit_vec::BitVec;
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
+
 use rand::distributions::{Distribution, Standard};
-use rand::Rng;
-use variant_count::VariantCount;
+use rand::{random, Rng};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Gene {
@@ -65,7 +60,7 @@ impl Gene {
     }
 
     pub fn mutated(&self) -> Gene {
-        let bits = self.to_bits();
+        let bits = self.as_bits();
         let mut rng = rand::thread_rng();
         let position = rng.gen_range(0..bits.len());
         let mut new_bits = bits.clone();
@@ -73,7 +68,21 @@ impl Gene {
         Gene::from_bits(&new_bits)
     }
 
-    fn to_bits(&self) -> BitVec {
+    pub fn crossover(&self, other: &Gene) -> Gene {
+        let bits = self.as_bits();
+        let other_bits = other.as_bits();
+        let mut new_bits = BitVec::from_elem(bits.len(), false);
+        for i in 0..bits.len() {
+            if random() {
+                new_bits.set(i, bits[i]);
+            } else {
+                new_bits.set(i, other_bits[i]);
+            }
+        }
+        Gene::from_bits(&new_bits)
+    }
+
+    fn as_bits(&self) -> BitVec {
         let mut bits = BitVec::from_elem(16 + 8 + 8 + 1 + 1, false);
         let mut count = 0;
         for i in 0..16 {
@@ -91,7 +100,6 @@ impl Gene {
         bits.set(count, self.from_internal);
         count += 1;
         bits.set(count, self.to_internal);
-        count += 1;
         bits
     }
 
@@ -117,7 +125,6 @@ impl Gene {
         gene.from_internal = bits[count];
         count += 1;
         gene.to_internal = bits[count];
-        count += 1;
 
         gene
     }
@@ -148,16 +155,35 @@ impl Genome {
     pub fn genes(&self) -> impl Iterator<Item = &Gene> {
         self.genes.iter()
     }
+
+    pub fn crossover(first: &Genome, second: &Genome) -> Genome {
+        let size = first.size();
+        assert_eq!(size, second.size());
+        Genome::new(
+            first
+                .genes()
+                .zip(second.genes())
+                .map(|(f, s)| f.crossover(s))
+                .collect(),
+        )
+    }
+
+    pub fn mutate(&mut self, chance: f32) {
+        for gene in self.genes.iter_mut() {
+            if random::<f32>() < chance {
+                *gene = gene.mutated();
+            }
+        }
+    }
 }
 
 mod test {
     #[test]
     fn bits_to_from() {
         use super::Gene;
-        use bit_vec::BitVec;
 
         fn test_bits(gene: Gene) {
-            let bits = gene.to_bits();
+            let bits = gene.as_bits();
             let from_bits = Gene::from_bits(&bits);
             assert_eq!(gene, from_bits);
         }
