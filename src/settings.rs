@@ -30,7 +30,8 @@ impl Default for Settings {
             let mut brain_inputs = vec![
                 Input::PosX,
                 Input::PosY,
-                Input::Direction,
+                Input::DirectionX,
+                Input::DirectionY,
                 Input::Speed,
                 Input::Age,
                 Input::Random,
@@ -47,8 +48,11 @@ impl Default for Settings {
                 Output::Move,
                 Output::Turn,
                 Output::ChangeSpeed,
+
+                // Analog
                 Output::DesiredSpeed,
-                Output::DesiredDirection,
+                Output::DesiredDirectionX,
+                Output::DesiredDirectionY,
             ];
             brain_outputs.extend(
                 (0..MEMORY_SIZE).flat_map(|i| vec![Output::DesiredMemory(i), Output::Remember(i)]),

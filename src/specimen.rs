@@ -19,11 +19,11 @@ impl Default for SpeedMultiplier {
 }
 
 impl NeuronValueConvertible for SpeedMultiplier {
-    fn from_neuron_value(neuron_value: &NeuronValue) -> Self {
-        SpeedMultiplier(neuron_value.as_multiplier(Self::MAX))
+    fn set_from_neuron_value(&mut self, neuron_value: &NeuronValue) {
+        self.0 = neuron_value.as_multiplier(Self::MAX);
     }
 
-    fn as_neuron_value(&self) -> NeuronValue {
+    fn get_neuron_value(&self) -> NeuronValue {
         NeuronValue::from_multiplier(self.0, Self::MAX)
     }
 }
@@ -37,26 +37,24 @@ pub struct Position(pub parry2d::na::Point2<f32>);
 #[derive(Component, Debug)]
 pub struct Direction(pub parry2d::na::Rotation2<f32>);
 
-#[derive(Component, Debug)]
-pub struct PreviousPosition(pub parry2d::na::Point2<f32>);
-
 impl Default for Direction {
     fn default() -> Self {
         Direction(parry2d::na::Rotation2::new(0.0))
     }
 }
 
-impl NeuronValueConvertible for Direction {
-    fn from_neuron_value(neuron_value: &NeuronValue) -> Self {
-        Self(parry2d::na::Rotation2::new(
-            neuron_value.value() * std::f32::consts::PI,
-        ))
+impl Direction {
+    pub fn x(&self) -> NeuronValue {
+        NeuronValue::new(self.0.angle().cos())
     }
 
-    fn as_neuron_value(&self) -> NeuronValue {
-        NeuronValue::new(self.0.angle() / std::f32::consts::PI)
+    pub fn y(&self) -> NeuronValue {
+        NeuronValue::new(self.0.angle().sin())
     }
 }
+
+#[derive(Component, Debug)]
+pub struct PreviousPosition(pub parry2d::na::Point2<f32>);
 
 #[derive(Component, Debug)]
 pub struct Age(pub u32);
@@ -96,8 +94,8 @@ impl BrainInputs {
 }
 
 pub trait NeuronValueConvertible {
-    fn from_neuron_value(neuron_value: &NeuronValue) -> Self;
-    fn as_neuron_value(&self) -> NeuronValue;
+    fn set_from_neuron_value(&mut self, neuron_value: &NeuronValue);
+    fn get_neuron_value(&self) -> NeuronValue;
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

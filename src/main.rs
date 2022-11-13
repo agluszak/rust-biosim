@@ -17,7 +17,7 @@ use bevy::prelude::{
 use bevy::window::PresentMode;
 use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
-use parry2d::na::distance;
+use parry2d::na::{distance, Rotation2, Vector2};
 use rand::random;
 use std::time::Instant;
 
@@ -124,8 +124,9 @@ fn brain_input_collection_system(
                 settings.world_half_size,
             ),
         );
-        brain_inputs.add(Input::Speed, speed.as_neuron_value());
-        brain_inputs.add(Input::Direction, direction.as_neuron_value());
+        brain_inputs.add(Input::Speed, speed.get_neuron_value());
+        brain_inputs.add(Input::DirectionX, direction.x());
+        brain_inputs.add(Input::DirectionY, direction.y());
         brain_inputs.add(
             Input::DistanceToBirthplace,
             NeuronValue::from_linear(
@@ -262,12 +263,15 @@ fn doing_system(
             commands.entity(entity).insert(WantsToMove);
         }
         if brain_outputs.activated(Output::Turn) {
-            let output = brain_outputs.get(Output::DesiredDirection);
-            *direction = Direction::from_neuron_value(&output);
+            let desired_x = brain_outputs.get(Output::DesiredDirectionX);
+            let desired_y = brain_outputs.get(Output::DesiredDirectionY);
+            let desired_direction = Vector2::new(desired_x.value(), desired_y.value())
+                .normalize();
+            *direction = Direction(Rotation2::rotation_between(&Vector2::new(1.0, 0.0), &desired_direction));
         }
         if brain_outputs.activated(Output::ChangeSpeed) {
             let output = brain_outputs.get(Output::DesiredSpeed);
-            *speed = SpeedMultiplier::from_neuron_value(&output);
+            speed.set_from_neuron_value(&output);
         }
         for i in 0..MEMORY_SIZE {
             if brain_outputs.activated(Output::Remember(i)) {

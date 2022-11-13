@@ -1,0 +1,6 @@
+- Separate drawing and logic
+- Add brain visualizer
+- Switch discrete generation-based approach to a more continuous one
+- Add plants and diets
+- Add health and death
+- Add reproduction

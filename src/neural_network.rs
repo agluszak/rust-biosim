@@ -274,7 +274,8 @@ impl NeuralNetwork {
 pub enum Input {
     PosX,
     PosY,
-    Direction,
+    DirectionX,
+    DirectionY,
     Speed,
     Age,
     Proximity,
@@ -300,7 +301,8 @@ pub enum Output {
     ChangeSpeed,
     // Analog values
     DesiredSpeed,
-    DesiredDirection,
+    DesiredDirectionX,
+    DesiredDirectionY,
     DesiredMemory(usize),
     DesiredFastOscillatorPeriod,
     DesiredMediumOscillatorPeriod,
