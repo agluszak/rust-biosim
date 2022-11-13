@@ -74,17 +74,17 @@ impl NeuralNetwork {
     fn internal_connections(
         internal_internal_weights: &Weights<InternalInternal>,
     ) -> (Neighbors, Neighbors) {
-        let mut forward_internal_connections = HashMap::new();
-        let mut backward_internal_connections = HashMap::new();
+        let mut forward_internal_connections: HashMap<NeuronId, Vec<NeuronId>> = HashMap::new();
+        let mut backward_internal_connections: HashMap<NeuronId, Vec<NeuronId>> = HashMap::new();
 
         for (from, to) in internal_internal_weights.keys() {
             backward_internal_connections
                 .entry(*to)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(*from);
             forward_internal_connections
                 .entry(*from)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(*to);
         }
 
@@ -192,7 +192,7 @@ impl NeuralNetwork {
                 neighbors.remove(self_pos);
                 *internal_internal_weights
                     .get(&(neuron_id, neuron_id))
-                    .unwrap() as f32
+                    .unwrap()
                     / MAX_WEIGHT
             } else {
                 0.0

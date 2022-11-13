@@ -1,7 +1,7 @@
 use crate::neural_network;
 use bevy::ecs::prelude::*;
 
-#[derive(Component, Clone, Debug)]
+#[derive(Resource, Clone, Debug)]
 pub struct Settings {
     pub specimen_size: f32,
     pub world_size: f32,

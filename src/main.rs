@@ -11,8 +11,10 @@ use crate::specimen::{
 };
 use bevy::app::{App, CoreStage};
 use bevy::ecs::prelude::*;
-use bevy::prelude::{AssetServer, Msaa, Text, Transform, Vec3, WindowDescriptor};
-use bevy::tasks::ComputeTaskPool;
+use bevy::prelude::{
+    default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, WindowDescriptor, WindowPlugin,
+};
+use bevy::window::PresentMode;
 use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
 use parry2d::na::distance;
@@ -25,14 +27,16 @@ struct GenerationChangeStage;
 fn main() {
     App::new()
         .insert_resource(Msaa { samples: 4 })
-        .insert_resource(WindowDescriptor {
-            title: "Turbo Evolution Giga Simulator".to_string(),
-            width: 550.,
-            height: 550.,
-            vsync: true,
-            ..Default::default()
-        })
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            window: WindowDescriptor {
+                title: "Turbo Evolution Giga Simulator".to_string(),
+                width: 550.,
+                height: 550.,
+                present_mode: PresentMode::Immediate,
+                ..default()
+            },
+            ..default()
+        }))
         .add_plugin(ShapePlugin)
         .add_startup_system(setup_system)
         .add_system(display_system)
@@ -54,13 +58,13 @@ fn main() {
 #[derive(Component)]
 struct WantsToMove;
 
-#[derive(Component)]
+#[derive(Resource)]
 struct Turn(u32);
 
-#[derive(Component)]
+#[derive(Resource)]
 struct Generation(u32);
 
-#[derive(Component)]
+#[derive(Resource)]
 struct GenerationStartTime(std::time::Instant);
 
 #[derive(Component)]
@@ -167,7 +171,7 @@ fn new_generation_system(
             // Initialize the first generation
             for _ in 0..settings.population {
                 let genome = genome::Genome::random(settings.genome_length);
-                commands.spawn_bundle(SpecimenBundle::new(
+                commands.spawn(SpecimenBundle::new(
                     settings.world_size,
                     Genome(genome),
                     &settings.brain_inputs,
@@ -203,7 +207,7 @@ fn new_generation_system(
                 let second = selected.next().unwrap();
                 let mut genome = genome::Genome::crossover(first, second);
                 genome.mutate(settings.mutation_chance);
-                commands.spawn_bundle(SpecimenBundle::new(
+                commands.spawn(SpecimenBundle::new(
                     settings.world_size,
                     Genome(genome),
                     &settings.brain_inputs,
@@ -235,11 +239,8 @@ fn time_system(
     }
 }
 
-fn thinking_system(
-    pool: Res<ComputeTaskPool>,
-    mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>,
-) {
-    query.par_for_each_mut(&pool, 1, |(mut brain, brain_inputs, mut brain_outputs)| {
+fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>) {
+    query.par_for_each_mut(1, |(mut brain, brain_inputs, mut brain_outputs)| {
         let outputs = brain.0.think(brain_inputs.read());
         *brain_outputs = BrainOutputs::from_hashmap(outputs);
     });
@@ -295,13 +296,11 @@ fn movement_system(
         position.0.x = position
             .0
             .x
-            .max(-settings.world_half_size)
-            .min(settings.world_half_size);
+            .clamp(-settings.world_half_size, settings.world_half_size);
         position.0.y = position
             .0
             .y
-            .max(-settings.world_half_size)
-            .min(settings.world_half_size);
+            .clamp(-settings.world_half_size, settings.world_half_size);
         commands.entity(entity).remove::<WantsToMove>();
     }
 }
@@ -331,34 +330,33 @@ fn display_system(turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)>
 
 fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
     use bevy::prelude::*;
-    commands.spawn_bundle(UiCameraBundle::default());
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    commands.spawn(Camera2dBundle::new_with_far(100.0));
     commands.insert_resource(Settings::default());
     commands.insert_resource(Turn(0));
     commands.insert_resource(Generation(0));
     commands.insert_resource(GenerationStartTime(Instant::now()));
-    commands
-        .spawn_bundle(TextBundle {
+    commands.spawn((
+        TextBundle {
             style: Style {
                 align_self: AlignSelf::FlexEnd,
                 position_type: PositionType::Absolute,
-                position: Rect {
+                position: UiRect {
                     bottom: Val::Px(5.0),
                     right: Val::Px(15.0),
                     ..Default::default()
                 },
                 ..Default::default()
             },
-            text: Text::with_section(
+            text: Text::from_section(
                 "",
                 TextStyle {
                     font: asset_server.load("fonts/Roboto-Regular.ttf"),
                     font_size: 100.0,
                     color: Color::BLACK,
                 },
-                Default::default(),
             ),
             ..Default::default()
-        })
-        .insert(TurnText);
+        },
+        TurnText,
+    ));
 }
