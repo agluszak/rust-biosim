@@ -201,6 +201,8 @@ pub struct SpecimenBundle {
     alive: Alive,
     #[bundle]
     shape_bundle: ShapeBundle,
+    fill: Fill,
+    stroke: Stroke,
 }
 
 impl SpecimenBundle {
@@ -227,15 +229,12 @@ impl SpecimenBundle {
             center: Vec2::new(0.0, 0.0),
         };
 
-        let shape_bundle = GeometryBuilder::build_as(
-            &shape,
-            DrawMode::Outlined {
-                fill_mode: FillMode::color(Color::rgb(random(), random(), random())),
-                outline_mode: StrokeMode::new(Color::BLACK, 1.0),
-            },
-            // TODO world scaling
-            Transform::default(),
-        );
+        let path = GeometryBuilder::build_as(&shape);
+
+        let shape_bundle = ShapeBundle {
+            path,
+            ..default()
+        };
 
         let brain = Brain(neural_network::NeuralNetwork::from_genome(
             &genome.0,
@@ -261,6 +260,8 @@ impl SpecimenBundle {
             brain_outputs,
             alive: Alive,
             shape_bundle,
+            fill: Fill::color(Color::rgb(random(), random(), random())),
+            stroke: Stroke::new(Color::BLACK, 1.0),
         }
     }
 }

@@ -66,7 +66,7 @@ impl Default for Settings {
             specimen_size: 1.0,
             world_size,
             world_half_size: world_size / 2.0,
-            population: 70,
+            population: 150,
             internal_neurons: 30,
             genome_length: 70,
             mutation_chance: 0.01,

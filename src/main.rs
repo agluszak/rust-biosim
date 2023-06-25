@@ -9,11 +9,9 @@ use crate::specimen::{
     NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, SpecimenBundle,
     SpeedMultiplier,
 };
-use bevy::app::{App, CoreStage};
+use bevy::app::{App};
 use bevy::ecs::prelude::*;
-use bevy::prelude::{
-    default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, WindowDescriptor, WindowPlugin,
-};
+use bevy::prelude::{default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, WindowPlugin, Window};
 use bevy::window::PresentMode;
 use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
@@ -21,20 +19,16 @@ use parry2d::na::{distance, Rotation2, Vector2};
 use rand::random;
 use std::time::Instant;
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, StageLabel)]
-struct GenerationChangeStage;
-
 fn main() {
     App::new()
-        .insert_resource(Msaa { samples: 4 })
+        .insert_resource(Msaa::Sample4)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
-            window: WindowDescriptor {
+            primary_window: Some(Window {
                 title: "Turbo Evolution Giga Simulator".to_string(),
-                width: 550.,
-                height: 550.,
+                resolution: (550., 550.).into(),
                 present_mode: PresentMode::Immediate,
                 ..default()
-            },
+            }),
             ..default()
         }))
         .add_plugin(ShapePlugin)
@@ -46,12 +40,7 @@ fn main() {
         .add_system(doing_system)
         .add_system(time_system)
         .add_system(text_update_system)
-        .add_stage_before(
-            CoreStage::Update,
-            GenerationChangeStage,
-            SystemStage::parallel(),
-        )
-        .add_system_to_stage(GenerationChangeStage, new_generation_system)
+        .add_system(new_generation_system)
         .run();
 }
 
@@ -102,7 +91,7 @@ fn brain_input_collection_system(
         speed,
         direction,
         birthplace,
-        oscillator,
+        _oscillator,
         previous_position,
         memory,
         _,
@@ -188,10 +177,7 @@ fn new_generation_system(
             let genomes = alive
                 .iter()
                 .filter(|(_, position, _)| {
-                    position.0.x < settings.world_half_size / 2.0
-                        && position.0.x > -settings.world_half_size / 2.0
-                        && position.0.y < settings.world_half_size / 2.0
-                        && position.0.y > -settings.world_half_size / 2.0
+                    position.0.x > 0.0 && position.0.y > 0.0
                 })
                 .map(|(genome, _, _)| genome.0.clone())
                 .collect::<Vec<_>>();
@@ -241,7 +227,7 @@ fn time_system(
 }
 
 fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>) {
-    query.par_for_each_mut(1, |(mut brain, brain_inputs, mut brain_outputs)| {
+    query.iter_mut().for_each(|(mut brain, brain_inputs, mut brain_outputs)| { // TODO: make parallel
         let outputs = brain.0.think(brain_inputs.read());
         *brain_outputs = BrainOutputs::from_hashmap(outputs);
     });
@@ -321,7 +307,7 @@ fn text_update_system(
 
 const DISPLAY_SCALE: f32 = 5.0;
 
-fn display_system(turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)>) {
+fn display_system(_turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)>) {
     for (position, mut transform) in query.iter_mut() {
         // TODO scale
         transform.translation = Vec3::new(
