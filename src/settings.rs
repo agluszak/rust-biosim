@@ -48,7 +48,6 @@ impl Default for Settings {
                 Output::Move,
                 Output::Turn,
                 Output::ChangeSpeed,
-
                 // Analog
                 Output::DesiredSpeed,
                 Output::DesiredDirectionX,

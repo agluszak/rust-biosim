@@ -199,7 +199,7 @@ pub struct SpecimenBundle {
     brain_inputs: BrainInputs,
     brain_outputs: BrainOutputs,
     alive: Alive,
-    #[bundle]
+    #[bundle()]
     shape_bundle: ShapeBundle,
     fill: Fill,
     stroke: Stroke,
@@ -231,10 +231,7 @@ impl SpecimenBundle {
 
         let path = GeometryBuilder::build_as(&shape);
 
-        let shape_bundle = ShapeBundle {
-            path,
-            ..default()
-        };
+        let shape_bundle = ShapeBundle { path, ..default() };
 
         let brain = Brain(neural_network::NeuralNetwork::from_genome(
             &genome.0,

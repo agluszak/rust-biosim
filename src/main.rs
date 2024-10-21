@@ -9,9 +9,11 @@ use crate::specimen::{
     NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, SpecimenBundle,
     SpeedMultiplier,
 };
-use bevy::app::{App};
+use bevy::app::{App, Startup, Update};
 use bevy::ecs::prelude::*;
-use bevy::prelude::{default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, WindowPlugin, Window};
+use bevy::prelude::{
+    default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, Window, WindowPlugin,
+};
 use bevy::window::PresentMode;
 use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
@@ -31,16 +33,16 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugin(ShapePlugin)
-        .add_startup_system(setup_system)
-        .add_system(display_system)
-        .add_system(movement_system)
-        .add_system(brain_input_collection_system)
-        .add_system(thinking_system)
-        .add_system(doing_system)
-        .add_system(time_system)
-        .add_system(text_update_system)
-        .add_system(new_generation_system)
+        .add_plugins(ShapePlugin)
+        .add_systems(Startup, setup_system)
+        .add_systems(Update, display_system)
+        .add_systems(Update, movement_system)
+        .add_systems(Update, brain_input_collection_system)
+        .add_systems(Update, thinking_system)
+        .add_systems(Update, doing_system)
+        .add_systems(Update, time_system)
+        .add_systems(Update, text_update_system)
+        .add_systems(Update, new_generation_system)
         .run();
 }
 
@@ -70,17 +72,19 @@ fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32)
 }
 
 fn brain_input_collection_system(
-    mut query: Query<(
-        &mut BrainInputs,
-        &Position,
-        &SpeedMultiplier,
-        &Direction,
-        &Birthplace,
-        &Oscillator,
-        &PreviousPosition,
-        &Memory,
+    mut query: Query<
+        (
+            &mut BrainInputs,
+            &Position,
+            &SpeedMultiplier,
+            &Direction,
+            &Birthplace,
+            &Oscillator,
+            &PreviousPosition,
+            &Memory,
+        ),
         With<Alive>,
-    )>,
+    >,
     turn: Res<Turn>,
     settings: Res<Settings>,
 ) {
@@ -94,7 +98,6 @@ fn brain_input_collection_system(
         _oscillator,
         previous_position,
         memory,
-        _,
     ) in &mut query.iter_mut()
     {
         brain_inputs.add(
@@ -153,8 +156,8 @@ fn new_generation_system(
     settings: Res<Settings>,
     turn: Res<Turn>,
     generation: Res<Generation>,
-    to_remove: Query<(Entity, With<Genome>)>,
-    alive: Query<(&Genome, &Position, With<Alive>)>,
+    to_remove: Query<Entity, With<Genome>>,
+    alive: Query<(&Genome, &Position), With<Alive>>,
 ) {
     if turn.0 == 0 {
         if generation.0 == 0 {
@@ -176,13 +179,11 @@ fn new_generation_system(
             // TODO
             let genomes = alive
                 .iter()
-                .filter(|(_, position, _)| {
-                    position.0.x > 0.0 && position.0.y > 0.0
-                })
-                .map(|(genome, _, _)| genome.0.clone())
+                .filter(|(_, position)| position.0.x > 0.0 && position.0.y > 0.0)
+                .map(|(genome, _)| genome.0.clone())
                 .collect::<Vec<_>>();
             println!("Generation {}: {}", generation.0, genomes.len());
-            for (entity, _) in to_remove.iter() {
+            for entity in to_remove.iter() {
                 commands.entity(entity).despawn();
             }
 
@@ -227,10 +228,13 @@ fn time_system(
 }
 
 fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>) {
-    query.iter_mut().for_each(|(mut brain, brain_inputs, mut brain_outputs)| { // TODO: make parallel
-        let outputs = brain.0.think(brain_inputs.read());
-        *brain_outputs = BrainOutputs::from_hashmap(outputs);
-    });
+    query
+        .iter_mut()
+        .for_each(|(mut brain, brain_inputs, mut brain_outputs)| {
+            // TODO: make parallel
+            let outputs = brain.0.think(brain_inputs.read());
+            *brain_outputs = BrainOutputs::from_hashmap(outputs);
+        });
 }
 
 fn doing_system(
@@ -251,9 +255,11 @@ fn doing_system(
         if brain_outputs.activated(Output::Turn) {
             let desired_x = brain_outputs.get(Output::DesiredDirectionX);
             let desired_y = brain_outputs.get(Output::DesiredDirectionY);
-            let desired_direction = Vector2::new(desired_x.value(), desired_y.value())
-                .normalize();
-            *direction = Direction(Rotation2::rotation_between(&Vector2::new(1.0, 0.0), &desired_direction));
+            let desired_direction = Vector2::new(desired_x.value(), desired_y.value()).normalize();
+            *direction = Direction(Rotation2::rotation_between(
+                &Vector2::new(1.0, 0.0),
+                &desired_direction,
+            ));
         }
         if brain_outputs.activated(Output::ChangeSpeed) {
             let output = brain_outputs.get(Output::DesiredSpeed);
@@ -270,17 +276,19 @@ fn doing_system(
 
 fn movement_system(
     mut commands: Commands,
-    mut query: Query<(
-        Entity,
-        &mut Position,
-        &mut PreviousPosition,
-        &SpeedMultiplier,
-        &Direction,
+    mut query: Query<
+        (
+            Entity,
+            &mut Position,
+            &mut PreviousPosition,
+            &SpeedMultiplier,
+            &Direction,
+        ),
         With<WantsToMove>,
-    )>,
+    >,
     settings: Res<Settings>,
 ) {
-    for (entity, mut position, mut previous_position, speed, direction, _) in query.iter_mut() {
+    for (entity, mut position, mut previous_position, speed, direction) in query.iter_mut() {
         previous_position.0 = position.0;
         position.0 += direction.0 * parry2d::na::Vector2::new(speed.0 * settings.base_speed, 0.0);
         position.0.x = position
@@ -330,11 +338,8 @@ fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
             style: Style {
                 align_self: AlignSelf::FlexEnd,
                 position_type: PositionType::Absolute,
-                position: UiRect {
-                    bottom: Val::Px(5.0),
-                    right: Val::Px(15.0),
-                    ..Default::default()
-                },
+                bottom: Val::Px(5.0),
+                right: Val::Px(15.0),
                 ..Default::default()
             },
             text: Text::from_section(
