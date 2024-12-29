@@ -10,10 +10,7 @@ use crate::specimen::{
     SpeedMultiplier,
 };
 use bevy::app::{App, Startup, Update};
-use bevy::ecs::prelude::*;
-use bevy::prelude::{
-    default, AssetServer, Msaa, PluginGroup, Text, Transform, Vec3, Window, WindowPlugin,
-};
+use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
@@ -23,7 +20,6 @@ use std::time::Instant;
 
 fn main() {
     App::new()
-        .insert_resource(Msaa::Sample4)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Turbo Evolution Giga Simulator".to_string(),
@@ -309,7 +305,7 @@ fn text_update_system(
     mut query: Query<&mut Text, With<TurnText>>,
 ) {
     for mut text in query.iter_mut() {
-        text.sections[0].value = format!("Generation: {}\nTurn: {}", generation.0, turn.0);
+        text.0 = format!("Generation: {}\nTurn: {}", generation.0, turn.0);
     }
 }
 
@@ -334,23 +330,21 @@ fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(Generation(0));
     commands.insert_resource(GenerationStartTime(Instant::now()));
     commands.spawn((
-        TextBundle {
-            style: Style {
+       Text::new(
+           "",
+         ),
+       TextFont {
+           font: asset_server.load("fonts/Roboto-Regular.ttf"),
+           font_size: 100.0,
+           ..default()
+       },
+        TextColor(Color::BLACK),
+        Node {
                 align_self: AlignSelf::FlexEnd,
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(5.0),
                 right: Val::Px(15.0),
                 ..Default::default()
-            },
-            text: Text::from_section(
-                "",
-                TextStyle {
-                    font: asset_server.load("fonts/Roboto-Regular.ttf"),
-                    font_size: 100.0,
-                    color: Color::BLACK,
-                },
-            ),
-            ..Default::default()
         },
         TurnText,
     ));
