@@ -5,7 +5,7 @@ mod specimen;
 
 use crate::settings::{Settings, MEMORY_SIZE};
 use crate::specimen::{
-    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, Direction, Genome, Memory,
+    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, Direction, Genome, Health, Memory,
     NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, SpecimenBundle,
     SpeedMultiplier,
 };
@@ -38,7 +38,17 @@ fn main() {
         .add_systems(Update, doing_system)
         .add_systems(Update, time_system)
         .add_systems(Update, text_update_system)
-        .add_systems(Update, new_generation_system)
+        .add_systems(Update, transparency_system)
+        .add_systems(
+            Update,
+            (
+                first_generation_system.run_if(is_first_turn),
+                damage_system,
+                death_system,
+                new_generation_system,
+            )
+                .chain(),
+        )
         .run();
 }
 
@@ -150,55 +160,47 @@ fn brain_input_collection_system(
 fn new_generation_system(
     mut commands: Commands,
     settings: Res<Settings>,
-    turn: Res<Turn>,
     generation: Res<Generation>,
+    turn: Res<Turn>,
     to_remove: Query<Entity, With<Genome>>,
     alive: Query<(&Genome, &Position), With<Alive>>,
 ) {
-    if turn.0 == 0 {
-        if generation.0 == 0 {
-            // Initialize the first generation
-            for _ in 0..settings.population {
-                let genome = genome::Genome::random(settings.genome_length);
-                commands.spawn(SpecimenBundle::new(
-                    settings.world_size,
-                    Genome(genome),
-                    &settings.brain_inputs,
-                    &settings.brain_outputs,
-                    settings.internal_neurons,
-                ));
-            }
-        } else if alive.iter().count() < settings.population {
-            dbg!(alive.iter().count());
-            todo!()
-        } else {
-            // TODO
-            let genomes = alive
-                .iter()
-                .filter(|(_, position)| position.0.x > 0.0 && position.0.y > 0.0)
-                .map(|(genome, _)| genome.0.clone())
-                .collect::<Vec<_>>();
-            println!("Generation {}: {}", generation.0, genomes.len());
-            for entity in to_remove.iter() {
-                commands.entity(entity).despawn();
-            }
+    if turn.0 == settings.turns_per_generation {
+        // Get genomes from surviving specimens
+        let genomes = alive
+            .iter()
+            .map(|(genome, _)| genome.0.clone())
+            .collect::<Vec<_>>();
 
-            use rand::seq::SliceRandom;
+        println!("Generation {}: {}", generation.0, genomes.len());
 
-            for _ in 0..settings.population {
-                let mut selected = genomes.choose_multiple(&mut rand::thread_rng(), 2);
-                let first = selected.next().unwrap();
-                let second = selected.next().unwrap();
-                let mut genome = genome::Genome::crossover(first, second);
-                genome.mutate(settings.mutation_chance);
-                commands.spawn(SpecimenBundle::new(
-                    settings.world_size,
-                    Genome(genome),
-                    &settings.brain_inputs,
-                    &settings.brain_outputs,
-                    settings.internal_neurons,
-                ));
-            }
+        // Remove all existing specimens
+        for entity in to_remove.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        // If no specimens survived, panic
+        if genomes.is_empty() {
+            panic!("No specimens survived!");
+        }
+
+        use rand::seq::SliceRandom;
+
+        // Repopulate using the surviving specimens' genomes
+        for _ in 0..settings.population {
+            let mut selected = genomes.choose_multiple(&mut rand::thread_rng(), 2);
+            let first = selected.next().unwrap();
+            let second = selected.next().unwrap();
+            let mut genome = genome::Genome::crossover(first, second);
+            genome.mutate(settings.mutation_chance);
+
+            commands.spawn(SpecimenBundle::new(
+                settings.world_size,
+                Genome(genome),
+                &settings.brain_inputs,
+                &settings.brain_outputs,
+                settings.internal_neurons,
+            ));
         }
     }
 }
@@ -208,7 +210,7 @@ fn time_system(
     mut generation: ResMut<Generation>,
     mut generation_start: ResMut<GenerationStartTime>,
     settings: Res<Settings>,
-    mut query: Query<(&mut Age,)>,
+    mut query: Query<(&mut Age,), With<Alive>>,
 ) {
     if turn.0 == settings.turns_per_generation {
         generation.0 += 1;
@@ -223,7 +225,7 @@ fn time_system(
     }
 }
 
-fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs)>) {
+fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs), With<Alive>>) {
     query
         .iter_mut()
         .for_each(|(mut brain, brain_inputs, mut brain_outputs)| {
@@ -235,13 +237,16 @@ fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs
 
 fn doing_system(
     mut commands: Commands,
-    mut query: Query<(
-        Entity,
-        &BrainOutputs,
-        &mut Direction,
-        &mut SpeedMultiplier,
-        &mut Memory,
-    )>,
+    mut query: Query<
+        (
+            Entity,
+            &BrainOutputs,
+            &mut Direction,
+            &mut SpeedMultiplier,
+            &mut Memory,
+        ),
+        With<Alive>,
+    >,
 ) {
     use neural_network::Output;
     for (entity, brain_outputs, mut direction, mut speed, mut memory) in &mut query.iter_mut() {
@@ -280,7 +285,7 @@ fn movement_system(
             &SpeedMultiplier,
             &Direction,
         ),
-        With<WantsToMove>,
+        (With<WantsToMove>, With<Alive>),
     >,
     settings: Res<Settings>,
 ) {
@@ -324,28 +329,90 @@ fn display_system(_turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)
 
 fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
     use bevy::prelude::*;
-    commands.spawn(Camera2dBundle::new_with_far(100.0));
+    commands.spawn(Camera2d);
     commands.insert_resource(Settings::default());
     commands.insert_resource(Turn(0));
     commands.insert_resource(Generation(0));
     commands.insert_resource(GenerationStartTime(Instant::now()));
     commands.spawn((
-       Text::new(
-           "",
-         ),
-       TextFont {
-           font: asset_server.load("fonts/Roboto-Regular.ttf"),
-           font_size: 100.0,
-           ..default()
-       },
+        Text::new(""),
+        TextFont {
+            font: asset_server.load("fonts/Roboto-Regular.ttf"),
+            font_size: 100.0,
+            ..default()
+        },
         TextColor(Color::BLACK),
         Node {
-                align_self: AlignSelf::FlexEnd,
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(5.0),
-                right: Val::Px(15.0),
-                ..Default::default()
+            align_self: AlignSelf::FlexEnd,
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(5.0),
+            right: Val::Px(15.0),
+            ..Default::default()
         },
         TurnText,
     ));
+}
+
+fn is_first_turn(generation: Res<Generation>, turn: Res<Turn>) -> bool {
+    generation.0 == 0 && turn.0 == 0
+}
+
+fn first_generation_system(mut commands: Commands, settings: Res<Settings>) {
+    info!("First generation");
+    // Initialize the first generation with random genomes
+    for _ in 0..settings.population {
+        let genome = genome::Genome::random(settings.genome_length);
+        commands.spawn(SpecimenBundle::new(
+            settings.world_size,
+            Genome(genome),
+            &settings.brain_inputs,
+            &settings.brain_outputs,
+            settings.internal_neurons,
+        ));
+    }
+}
+
+fn damage_system(mut query: Query<(&Position, &mut Health), With<Alive>>, settings: Res<Settings>) {
+    for (position, mut health) in query.iter_mut() {
+        let damage = if position.0.x <= 0.0 || position.0.y <= 0.0 {
+            let distance_from_goal =
+                ((-position.0.x).max(0.0).powi(2) + (-position.0.y).max(0.0).powi(2)).sqrt();
+            // Convert distance to damage - further means more damage
+            4.0 * distance_from_goal / settings.world_half_size
+        } else {
+            0.0
+        };
+        health.0 -= damage;
+    }
+}
+
+fn death_system(mut commands: Commands, query: Query<(Entity, &Health), With<Alive>>) {
+    for (entity, health) in query.iter() {
+        if health.0 <= 0.0 {
+            commands.entity(entity).remove::<Alive>();
+        }
+    }
+}
+
+fn transparency_system(mut query: Query<(&Health, &mut Fill, &mut Stroke, Option<&Alive>)>) {
+    for (health, mut fill, mut stroke, alive) in query.iter_mut() {
+        match alive {
+            Some(_) => {
+                let health_value = health.0.clamp(0.0, 100.0);
+                let alpha = health_value / 100.0;
+                let previous_color = fill.color.to_srgba();
+                *fill = Fill::color(Color::srgba(
+                    previous_color.red,
+                    previous_color.green,
+                    previous_color.blue,
+                    alpha,
+                ));
+                *stroke = Stroke::new(Color::BLACK, 1.0);
+            }
+            None => {
+                *fill = Fill::color(Color::NONE);
+                *stroke = Stroke::new(Color::BLACK, 2.0);
+            }
+        }
+    }
 }

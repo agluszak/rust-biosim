@@ -1,5 +1,4 @@
-use bit_vec::BitVec;
-use nalgebra::{DMatrix, SVector, VectorN, U3};
+use nalgebra::DMatrix;
 use ndarray::{Array2, Axis};
 use rand::distributions::{Distribution, Standard};
 use rand::{random, Rng};
@@ -9,8 +8,8 @@ use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 const GENOME_LENGTH: usize = 60; // Adjust as needed
-const INPUT_LENGTH: u8 = 100;    // Adjust as needed
-const OUTPUT_LENGTH: u8 = 100;   // Adjust as needed
+const INPUT_LENGTH: u8 = 100; // Adjust as needed
+const OUTPUT_LENGTH: u8 = 100; // Adjust as needed
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Gene {
@@ -86,13 +85,28 @@ impl Gene {
         let mut rng = rand::thread_rng();
         Gene {
             weight: if rng.gen() { self.weight } else { other.weight },
-            input_index: if rng.gen() { self.input_index } else { other.input_index },
-            output_index: if rng.gen() { self.output_index } else { other.output_index },
-            from_internal: if rng.gen() { self.from_internal } else { other.from_internal },
-            to_internal: if rng.gen() { self.to_internal } else { other.to_internal },
+            input_index: if rng.gen() {
+                self.input_index
+            } else {
+                other.input_index
+            },
+            output_index: if rng.gen() {
+                self.output_index
+            } else {
+                other.output_index
+            },
+            from_internal: if rng.gen() {
+                self.from_internal
+            } else {
+                other.from_internal
+            },
+            to_internal: if rng.gen() {
+                self.to_internal
+            } else {
+                other.to_internal
+            },
         }
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -117,7 +131,7 @@ impl Genome {
         self.genes.len()
     }
 
-    pub fn genes(&self) -> impl Iterator<Item=&Gene> {
+    pub fn genes(&self) -> impl Iterator<Item = &Gene> {
         self.genes.iter()
     }
 
@@ -144,23 +158,24 @@ impl Genome {
 
 fn genome_to_features(genome: &Genome) -> Vec<f32> {
     let mut features = Vec::with_capacity(GENOME_LENGTH * 5);
-    features.extend(genome.genes.iter().flat_map(|gene| [
-        gene.weight as f32,
-        (gene.input_index % INPUT_LENGTH) as f32,
-        (gene.output_index % OUTPUT_LENGTH) as f32,
-        gene.from_internal as u8 as f32,
-        gene.to_internal as u8 as f32,
-    ]));
+    features.extend(genome.genes.iter().flat_map(|gene| {
+        [
+            gene.weight as f32,
+            (gene.input_index % INPUT_LENGTH) as f32,
+            (gene.output_index % OUTPUT_LENGTH) as f32,
+            gene.from_internal as u8 as f32,
+            gene.to_internal as u8 as f32,
+        ]
+    }));
     features
 }
-
 
 fn normalize_features_zscore(features: &[Vec<f32>]) -> Array2<f32> {
     let num_features = features[0].len();
     let num_samples = features.len();
-    
+
     let mut result = Array2::zeros((num_samples, num_features));
-    
+
     // Fill result array and calculate means
     let mut means = vec![0.0; num_features];
     for (i, feature) in features.iter().enumerate() {
@@ -169,7 +184,7 @@ fn normalize_features_zscore(features: &[Vec<f32>]) -> Array2<f32> {
             result[[i, j]] = value;
         }
     }
-    
+
     let num_samples_f = num_samples as f32;
     for mean in &mut means {
         *mean /= num_samples_f;
@@ -197,46 +212,49 @@ fn normalize_features_zscore(features: &[Vec<f32>]) -> Array2<f32> {
 // Optimize PCA by using nalgebra directly and avoiding conversions
 fn apply_pca(data: &Array2<f32>, n_components: usize) -> Array2<f32> {
     let n_samples = data.nrows();
-    
+
     // Calculate mean and center the data
     let mean = data.mean_axis(Axis(0)).unwrap();
     let centered = data - &mean.broadcast((n_samples, mean.len())).unwrap();
-    
+
     // Convert to nalgebra matrix
     let data_matrix = DMatrix::from_row_slice(
         centered.nrows(),
         centered.ncols(),
         centered.as_slice().unwrap(),
     );
-    
+
     // Compute covariance matrix
     let cov = (&data_matrix.transpose() * &data_matrix) / (n_samples as f32 - 1.0);
-    
+
     // Compute eigendecomposition
     let eigen = cov.symmetric_eigen();
-    
+
     // Sort eigenvectors by eigenvalues
-    let mut pairs: Vec<_> = eigen.eigenvalues.iter()
+    let mut pairs: Vec<_> = eigen
+        .eigenvalues
+        .iter()
         .zip(eigen.eigenvectors.column_iter())
         .collect();
     pairs.sort_by(|a, b| b.0.partial_cmp(a.0).unwrap());
-    
+
     let components = DMatrix::from_columns(
-        &pairs.iter()
+        &pairs
+            .iter()
             .take(n_components)
-            .map(|(_, v)| v.clone())
-            .collect::<Vec<_>>()
+            .map(|(_, v)| *v)
+            .collect::<Vec<_>>(),
     );
-    
+
     // Project data
     let projected = data_matrix * components;
-    
+
     Array2::from_shape_vec(
         (projected.nrows(), projected.ncols()),
         projected.as_slice().to_vec(),
-    ).unwrap()
+    )
+    .unwrap()
 }
-
 
 fn map_to_rgb(pca_data: &Array2<f32>) -> Vec<(u8, u8, u8)> {
     let mut normalized = pca_data.clone();
@@ -257,28 +275,31 @@ fn map_to_rgb(pca_data: &Array2<f32>) -> Vec<(u8, u8, u8)> {
     }
 
     // Map normalized values to RGB
-    normalized.rows().into_iter().map(|row| {
-        let r = (row[0].clamp(0.0, 1.0) * 255.0) as u8;
-        let g = (row[1].clamp(0.0, 1.0) * 255.0) as u8;
-        let b = (row[2].clamp(0.0, 1.0) * 255.0) as u8;
-        (r, g, b)
-    }).collect()
+    normalized
+        .rows()
+        .into_iter()
+        .map(|row| {
+            let r = (row[0].clamp(0.0, 1.0) * 255.0) as u8;
+            let g = (row[1].clamp(0.0, 1.0) * 255.0) as u8;
+            let b = (row[2].clamp(0.0, 1.0) * 255.0) as u8;
+            (r, g, b)
+        })
+        .collect()
 }
 
 fn assign_colors(genomes: &[Genome]) -> Vec<(u8, u8, u8)> {
     // Convert genomes to feature vectors in parallel
     let feature_vectors: Vec<Vec<f32>> = genomes.par_iter().map(genome_to_features).collect();
-    
+
     // Normalize features directly to Array2
     let data = normalize_features_zscore(&feature_vectors);
-    
+
     // Apply PCA to reduce to 3 dimensions
     let pca_data = apply_pca(&data, 3);
-    
+
     // Map PCA dimensions to RGB
     map_to_rgb(&pca_data)
 }
-
 
 fn main() {
     // Create sample genomes
@@ -287,11 +308,9 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     info!("This is an error message");
-
 
     info!("Generating Genomes");
     for _ in 0..60 {

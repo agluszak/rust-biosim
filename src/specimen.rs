@@ -5,6 +5,9 @@ use bevy_prototype_lyon::prelude::*;
 use rand::random;
 use std::collections::HashMap;
 
+#[derive(Component)]
+pub struct Health(pub f32);
+
 #[derive(Component, Debug)]
 pub struct SpeedMultiplier(pub f32);
 
@@ -123,23 +126,11 @@ impl NeuronValue {
     }
 
     pub fn as_multiplier(&self, max: f32) -> f32 {
-        if self.0 < 0.0 {
-            map_range(self.0, Self::MIN, 0.0, 1.0 / max, 1.0)
-        } else if self.0 > 0.0 {
-            map_range(self.0, 0.0, Self::MAX, 1.0, max)
-        } else {
-            1.0
-        }
+        max.powf(self.0)
     }
 
     pub fn from_multiplier(multiplier: f32, max: f32) -> Self {
-        if multiplier < 1.0 {
-            NeuronValue::new(map_range(multiplier, 1.0 / max, 1.0, Self::MIN, 0.0))
-        } else if multiplier > 1.0 {
-            NeuronValue::new(map_range(multiplier, 1.0, max, 0.0, Self::MAX))
-        } else {
-            NeuronValue(0.0)
-        }
+        NeuronValue::new(multiplier.log(max))
     }
 }
 
@@ -198,6 +189,7 @@ pub struct SpecimenBundle {
     brain: Brain,
     brain_inputs: BrainInputs,
     brain_outputs: BrainOutputs,
+    health: Health,
     alive: Alive,
     #[bundle()]
     shape_bundle: ShapeBundle,
@@ -255,9 +247,10 @@ impl SpecimenBundle {
             brain,
             brain_inputs,
             brain_outputs,
+            health: Health(100.0),
             alive: Alive,
             shape_bundle,
-            fill: Fill::color(Color::rgb(random(), random(), random())),
+            fill: Fill::color(Color::srgb(random(), random(), random())),
             stroke: Stroke::new(Color::BLACK, 1.0),
         }
     }
