@@ -1,7 +1,7 @@
 use nalgebra::DMatrix;
 use ndarray::{Array2, Axis};
-use rand::distributions::{Distribution, Standard};
-use rand::{random, Rng};
+use rand::distr::{Distribution, StandardUniform};
+use rand::{Rng, random};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
 use tracing::info;
@@ -20,9 +20,15 @@ pub struct Gene {
     to_internal: bool,
 }
 
-impl Distribution<Gene> for Standard {
+impl Distribution<Gene> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Gene {
-        Gene::new(rng.gen(), rng.gen(), rng.gen(), rng.gen(), rng.gen())
+        Gene::new(
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+        )
     }
 }
 
@@ -44,7 +50,7 @@ impl Gene {
     }
 
     pub fn random() -> Gene {
-        rand::thread_rng().gen()
+        rand::rng().random()
     }
 
     pub fn weight(&self) -> i16 {
@@ -69,12 +75,12 @@ impl Gene {
 
     pub fn mutated(&self) -> Gene {
         let mut new_gene = *self;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // Randomly modify one of the fields
         match rng.gen_range(0..5) {
-            0 => new_gene.weight = rng.gen(),
-            1 => new_gene.input_index = rng.gen(),
-            2 => new_gene.output_index = rng.gen(),
+            0 => new_gene.weight = rng.random(),
+            1 => new_gene.input_index = rng.random(),
+            2 => new_gene.output_index = rng.random(),
             3 => new_gene.from_internal = !new_gene.from_internal,
             _ => new_gene.to_internal = !new_gene.to_internal,
         }
@@ -82,25 +88,29 @@ impl Gene {
     }
 
     pub fn crossover(&self, other: &Gene) -> Gene {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         Gene {
-            weight: if rng.gen() { self.weight } else { other.weight },
-            input_index: if rng.gen() {
+            weight: if rng.random() {
+                self.weight
+            } else {
+                other.weight
+            },
+            input_index: if rng.random() {
                 self.input_index
             } else {
                 other.input_index
             },
-            output_index: if rng.gen() {
+            output_index: if rng.random() {
                 self.output_index
             } else {
                 other.output_index
             },
-            from_internal: if rng.gen() {
+            from_internal: if rng.random() {
                 self.from_internal
             } else {
                 other.from_internal
             },
-            to_internal: if rng.gen() {
+            to_internal: if rng.random() {
                 self.to_internal
             } else {
                 other.to_internal

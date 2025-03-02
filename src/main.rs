@@ -3,18 +3,19 @@ mod neural_network;
 mod settings;
 mod specimen;
 
-use crate::settings::{Settings, MEMORY_SIZE};
+use crate::settings::{MEMORY_SIZE, Settings};
 use crate::specimen::{
     Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, Direction, Genome, Health, Memory,
     NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, SpecimenBundle,
     SpeedMultiplier,
 };
+use bevy::DefaultPlugins;
 use bevy::app::{App, Startup, Update};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
-use bevy::DefaultPlugins;
 use bevy_prototype_lyon::prelude::*;
-use parry2d::na::{distance, Rotation2, Vector2};
+use parry2d::na::{Rotation2, Vector2, distance};
+use rand::prelude::IndexedRandom;
 use rand::random;
 use std::time::Instant;
 
@@ -184,11 +185,9 @@ fn new_generation_system(
             panic!("No specimens survived!");
         }
 
-        use rand::seq::SliceRandom;
-
         // Repopulate using the surviving specimens' genomes
         for _ in 0..settings.population {
-            let mut selected = genomes.choose_multiple(&mut rand::thread_rng(), 2);
+            let mut selected = genomes.choose_multiple(&mut rand::rng(), 2);
             let first = selected.next().unwrap();
             let second = selected.next().unwrap();
             let mut genome = genome::Genome::crossover(first, second);

@@ -1,4 +1,4 @@
-use crate::{genome, map_range, neural_network, MEMORY_SIZE};
+use crate::{MEMORY_SIZE, genome, map_range, neural_network};
 use bevy::prelude::*;
 use bevy_prototype_lyon::entity::ShapeBundle;
 use bevy_prototype_lyon::prelude::*;

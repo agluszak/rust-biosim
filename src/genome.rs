@@ -1,7 +1,8 @@
 use bit_vec::BitVec;
 
-use rand::distributions::{Distribution, Standard};
-use rand::{random, Rng};
+use rand::distr::StandardUniform;
+use rand::prelude::Distribution;
+use rand::{Rng, random};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Gene {
@@ -12,9 +13,15 @@ pub struct Gene {
     to_internal: bool,
 }
 
-impl Distribution<Gene> for Standard {
+impl Distribution<Gene> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Gene {
-        Gene::new(rng.gen(), rng.gen(), rng.gen(), rng.gen(), rng.gen())
+        Gene::new(
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+            rng.random(),
+        )
     }
 }
 
@@ -36,7 +43,7 @@ impl Gene {
     }
 
     pub fn random() -> Gene {
-        rand::thread_rng().gen()
+        rand::rng().random()
     }
 
     pub fn weight(&self) -> i16 {
@@ -61,7 +68,7 @@ impl Gene {
 
     pub fn mutated(&self) -> Gene {
         let bits = self.as_bits();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let position = rng.gen_range(0..bits.len());
         let mut new_bits = bits.clone();
         new_bits.set(position, !bits[position]);
