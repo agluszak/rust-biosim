@@ -4,271 +4,7 @@ use variant_count::VariantCount;
 
 use crate::genome::Genome;
 
-type NeuronId = usize;
-type Priority = usize;
 type Weight = f32;
-type Neighbors = HashMap<NeuronId, Vec<NeuronId>>;
-type Weights<T> = HashMap<T, Weight>;
-type InternalInternal = (NeuronId, NeuronId);
-type InternalOutput = (NeuronId, Output);
-type InputInternal = (Input, NeuronId);
-type InputOutput = (Input, Output);
-
-#[derive(Debug, Clone)]
-struct Neuron {
-    internal_inputs: Vec<(NeuronId, Weight)>,
-    self_weight: f32,
-    value: f32,
-    previous_value: f32,
-}
-
-#[derive(Debug, Clone)]
-pub struct NeuralNetwork {
-    input_internal_weights: Weights<InputInternal>,
-    internal_output_weights: Weights<InternalOutput>,
-    input_output_weights: Weights<InputOutput>,
-    neurons: HashMap<NeuronId, Neuron>,
-    computation_order: Vec<NeuronId>,
-}
-
-const MAX_WEIGHT: Weight = i16::MAX as Weight;
-
-impl NeuralNetwork {
-    pub fn think(&mut self, input_values: &HashMap<Input, f32>) -> HashMap<Output, f32> {
-        let mut outputs = HashMap::new();
-
-        for ((input, output), &weight) in self.input_output_weights.iter() {
-            let input_value = input_values.get(input).copied().unwrap_or(0.0);
-            *outputs.entry(*output).or_insert(0.0) += input_value * weight;
-        }
-
-        for ((input, neuron_id), &weight) in self.input_internal_weights.iter() {
-            let neuron = self.neurons.get_mut(neuron_id).unwrap();
-            neuron.value += input_values.get(input).copied().unwrap_or(0.0) * weight;
-        }
-
-        for &neuron_id in self.computation_order.iter() {
-            let mut neuron = self.neurons[&neuron_id].clone();
-            for &(neighbor_id, weight) in &neuron.internal_inputs {
-                let neighbor = self.neurons.get(&neighbor_id).unwrap();
-                neuron.value += neighbor.value * weight;
-            }
-            neuron.value += neuron.self_weight * neuron.previous_value;
-            neuron.value = neuron.value.tanh();
-            neuron.previous_value = neuron.value;
-            self.neurons.insert(neuron_id, neuron);
-        }
-
-        for ((neuron_id, output), &weight) in self.internal_output_weights.iter() {
-            let neuron = self.neurons.get(neuron_id).unwrap();
-            *outputs.entry(*output).or_insert(0.0) += neuron.value * weight;
-        }
-
-        for (_, value) in outputs.iter_mut() {
-            *value = value.tanh();
-        }
-
-        outputs
-    }
-
-    fn internal_connections(
-        internal_internal_weights: &Weights<InternalInternal>,
-    ) -> (Neighbors, Neighbors) {
-        let mut forward_internal_connections: HashMap<NeuronId, Vec<NeuronId>> = HashMap::new();
-        let mut backward_internal_connections: HashMap<NeuronId, Vec<NeuronId>> = HashMap::new();
-
-        for (from, to) in internal_internal_weights.keys() {
-            backward_internal_connections
-                .entry(*to)
-                .or_default()
-                .push(*from);
-            forward_internal_connections
-                .entry(*from)
-                .or_default()
-                .push(*to);
-        }
-
-        (forward_internal_connections, backward_internal_connections)
-    }
-
-    fn topological_sort(
-        starting_points: HashSet<NeuronId>,
-        neighbors: Neighbors,
-    ) -> HashMap<NeuronId, Priority> {
-        let mut priorities = HashMap::new();
-
-        for node in starting_points {
-            let mut priority = 0;
-            let mut visited = HashSet::new();
-            let mut stack = Vec::new();
-            stack.push(node);
-            while let Some(node) = stack.pop() {
-                priorities
-                    .entry(node)
-                    .and_modify(|existing| {
-                        if *existing < priority {
-                            *existing = priority;
-                        }
-                    })
-                    .or_insert(priority);
-                priority += 1;
-                visited.insert(node);
-                if let Some(neighbors) = neighbors.get(&node) {
-                    for neighbor in neighbors {
-                        if !visited.contains(neighbor) {
-                            stack.push(*neighbor);
-                        }
-                    }
-                }
-            }
-        }
-
-        priorities
-    }
-
-    fn from_weights(
-        mut input_internal_weights: Weights<InputInternal>,
-        mut internal_output_weights: Weights<InternalOutput>,
-        mut internal_internal_weights: Weights<InternalInternal>,
-        input_output_weights: Weights<InputOutput>,
-    ) -> NeuralNetwork {
-        // Remove edges that are not connected to any output
-
-        let (forward_internal_connections, backward_internal_connections) =
-            NeuralNetwork::internal_connections(&internal_internal_weights);
-
-        let connected_to_inputs = input_internal_weights
-            .iter()
-            .map(|((_, k), _)| *k)
-            .collect::<HashSet<_>>();
-
-        let input_priorities =
-            NeuralNetwork::topological_sort(connected_to_inputs, forward_internal_connections);
-
-        let connected_to_outputs = internal_output_weights
-            .iter()
-            .map(|((k, _), _)| *k)
-            .collect::<HashSet<_>>();
-
-        let output_priorities =
-            NeuralNetwork::topological_sort(connected_to_outputs, backward_internal_connections);
-
-        internal_output_weights.retain(|(node, _), _| input_priorities.get(node).is_some());
-        internal_internal_weights.retain(|(from, to), _| {
-            input_priorities.get(from).is_some() && output_priorities.get(to).is_some()
-        });
-        input_internal_weights.retain(|(_, node), _| output_priorities.get(node).is_some());
-
-        let connected_to_outputs = internal_output_weights
-            .iter()
-            .map(|((k, _), _)| *k)
-            .collect::<HashSet<_>>();
-
-        let (forward_internal_connections, backward_internal_connections) =
-            NeuralNetwork::internal_connections(&internal_internal_weights);
-
-        let priorities =
-            NeuralNetwork::topological_sort(connected_to_outputs, backward_internal_connections);
-
-        let computation_order = {
-            let mut priorities = priorities.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>();
-            priorities.sort_unstable_by_key(|(_, v)| *v);
-            priorities.into_iter().map(|(k, _)| k).collect::<Vec<_>>()
-        };
-
-        let mut neurons = HashMap::new();
-        for &neuron_id in priorities.keys() {
-            let neuron = Neuron {
-                internal_inputs: Vec::new(),
-                self_weight: 0.0,
-                value: 0.0,
-                previous_value: 0.0,
-            };
-            neurons.insert(neuron_id, neuron);
-        }
-        for (neuron_id, mut neighbors) in forward_internal_connections {
-            let self_pos = neighbors.iter().position(|&neighbor| neighbor == neuron_id);
-            let self_weight = if let Some(self_pos) = self_pos {
-                neighbors.remove(self_pos);
-                *internal_internal_weights
-                    .get(&(neuron_id, neuron_id))
-                    .unwrap()
-                    / MAX_WEIGHT
-            } else {
-                0.0
-            };
-            let internal_inputs = neighbors
-                .into_iter()
-                .map(|neighbor| {
-                    let weight = internal_internal_weights
-                        .get(&(neuron_id, neighbor))
-                        .unwrap();
-                    (neighbor, *weight)
-                })
-                .collect::<Vec<_>>();
-            let neuron = neurons.get_mut(&neuron_id).unwrap();
-            neuron.internal_inputs = internal_inputs;
-            neuron.self_weight = self_weight;
-        }
-
-        NeuralNetwork {
-            input_internal_weights,
-            internal_output_weights,
-            input_output_weights,
-            neurons,
-            computation_order,
-        }
-    }
-
-    pub fn from_genome(
-        genome: &Genome,
-        inputs: &[Input],
-        outputs: &[Output],
-        internal_neurons_count: usize,
-    ) -> Self {
-        let mut input_internal_weights = HashMap::new();
-        let mut internal_output_weights = HashMap::new();
-        let mut internal_internal_weights = HashMap::new();
-        let mut input_output_weights = HashMap::new();
-
-        for gene in genome.genes() {
-            let weight = gene.weight() as isize;
-            match (gene.is_from_internal(), gene.is_to_internal()) {
-                (false, false) => {
-                    let from = inputs[gene.input_index() % inputs.len()];
-                    let to = outputs[gene.output_index() % outputs.len()];
-                    *input_output_weights.entry((from, to)).or_insert(0.0) +=
-                        weight as Weight / MAX_WEIGHT;
-                }
-                (true, false) => {
-                    let from = gene.input_index() % internal_neurons_count;
-                    let to = outputs[gene.output_index() % outputs.len()];
-                    *internal_output_weights.entry((from, to)).or_insert(0.0) +=
-                        weight as Weight / MAX_WEIGHT;
-                }
-                (false, true) => {
-                    let from = inputs[gene.input_index() % inputs.len()];
-                    let to = gene.output_index() % internal_neurons_count;
-                    *input_internal_weights.entry((from, to)).or_insert(0.0) +=
-                        weight as Weight / MAX_WEIGHT;
-                }
-                (true, true) => {
-                    let from = gene.input_index() % internal_neurons_count;
-                    let to = gene.output_index() % internal_neurons_count;
-                    *internal_internal_weights.entry((from, to)).or_insert(0.0) +=
-                        weight as Weight / MAX_WEIGHT;
-                }
-            }
-        }
-
-        NeuralNetwork::from_weights(
-            input_internal_weights,
-            internal_output_weights,
-            internal_internal_weights,
-            input_output_weights,
-        )
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, VariantCount)]
 pub enum Input {
@@ -308,4 +44,246 @@ pub enum Output {
     DesiredMediumOscillatorPeriod,
     DesiredSlowOscillatorPeriod,
     DesiredLongProbeDistance,
+}
+
+const MAX_WEIGHT: f32 = i16::MAX as f32;
+
+/// High-performance neural network implementation using flat arrays and direct indexing.
+/// This is much more cache-friendly than the HashMap-based approach.
+#[derive(Debug, Clone)]
+pub struct NeuralNetwork {
+    // New optimized structure using continuous memory
+    num_internal_neurons: usize,
+    input_indices: Vec<Input>,         // Maps from index to Input enum
+    output_indices: Vec<Output>,       // Maps from index to Output enum
+    
+    // Input-to-internal connectivity
+    input_to_internal: Vec<(usize, usize, f32)>, // (input_idx, neuron_idx, weight)
+    
+    // Internal-to-output connectivity 
+    internal_to_output: Vec<(usize, usize, f32)>, // (neuron_idx, output_idx, weight)
+    
+    // Direct input-to-output connectivity
+    input_to_output: Vec<(usize, usize, f32)>,   // (input_idx, output_idx, weight)
+    
+    // Internal neuron connectivity
+    internal_weights: Vec<Vec<(usize, f32)>>,    // For each neuron, list of (source_idx, weight)
+    self_weights: Vec<f32>,                      // Self-recurrent weights
+    
+    // Computation state
+    neuron_values: Vec<f32>,                     // Current values
+    neuron_previous: Vec<f32>,                   // Previous tick values
+    
+    // Computation order (in topological order)
+    computation_order: Vec<usize>,
+}
+
+impl NeuralNetwork {
+    /// Optimized neural network inference that processes inputs and produces outputs
+    pub fn think(&mut self, input_values: &HashMap<Input, f32>) -> HashMap<Output, f32> {
+        // Initialize outputs with zeros
+        let mut output_values = vec![0.0; self.output_indices.len()];
+        
+        // Process direct input-to-output connections (no activation function)
+        for &(input_idx, output_idx, weight) in &self.input_to_output {
+            let input_enum = self.input_indices[input_idx];
+            let input_value = input_values.get(&input_enum).copied().unwrap_or(0.0);
+            output_values[output_idx] += input_value * weight;
+        }
+        
+        // Reset all neuron values to zero
+        for value in &mut self.neuron_values {
+            *value = 0.0;
+        }
+        
+        // Process inputs to internal neurons
+        for &(input_idx, neuron_idx, weight) in &self.input_to_internal {
+            let input_enum = self.input_indices[input_idx];
+            let input_value = input_values.get(&input_enum).copied().unwrap_or(0.0);
+            self.neuron_values[neuron_idx] += input_value * weight;
+        }
+        
+        // Process internal neurons in topological order
+        for &neuron_idx in &self.computation_order {
+            // Apply self-recurrent connection
+            self.neuron_values[neuron_idx] += self.self_weights[neuron_idx] * self.neuron_previous[neuron_idx];
+            
+            // Calculate value based on inputs from other neurons
+            for &(src_idx, weight) in &self.internal_weights[neuron_idx] {
+                self.neuron_values[neuron_idx] += self.neuron_values[src_idx] * weight;
+            }
+            
+            // Apply activation function
+            self.neuron_values[neuron_idx] = self.neuron_values[neuron_idx].tanh();
+            
+            // Store for next iteration
+            self.neuron_previous[neuron_idx] = self.neuron_values[neuron_idx];
+        }
+        
+        // Process internal-to-output connections
+        for &(neuron_idx, output_idx, weight) in &self.internal_to_output {
+            output_values[output_idx] += self.neuron_values[neuron_idx] * weight;
+        }
+        
+        // Apply activation function to outputs
+        for value in &mut output_values {
+            *value = value.tanh();
+        }
+        
+        // Convert to HashMap for API compatibility
+        let mut outputs = HashMap::with_capacity(self.output_indices.len());
+        for (idx, &output_enum) in self.output_indices.iter().enumerate() {
+            outputs.insert(output_enum, output_values[idx]);
+        }
+        
+        outputs
+    }
+    
+    // Create a new neural network from a genome
+    pub fn from_genome(
+        genome: &Genome,
+        inputs: &[Input],
+        outputs: &[Output],
+        internal_neurons_count: usize,
+    ) -> Self {
+        // Create mappings between enum values and indices
+        let input_indices: Vec<Input> = inputs.to_vec();
+        let output_indices: Vec<Output> = outputs.to_vec();
+        
+        // Create a temporary representation using HashMaps
+        let mut input_to_internal: Vec<(usize, usize, f32)> = Vec::new();
+        let mut internal_to_output: Vec<(usize, usize, f32)> = Vec::new();
+        let mut input_to_output: Vec<(usize, usize, f32)> = Vec::new();
+        
+        // HashMap for accumulating weights during genome processing
+        let mut io_weights: HashMap<(usize, usize), f32> = HashMap::new();
+        let mut ii_weights: HashMap<(usize, usize), f32> = HashMap::new();
+        let mut oi_weights: HashMap<(usize, usize), f32> = HashMap::new();
+        
+        // Process genes and accumulate weights
+        for gene in genome.genes() {
+            let weight = gene.weight() as isize as f32 / MAX_WEIGHT;
+            
+            match (gene.is_from_internal(), gene.is_to_internal()) {
+                (false, false) => {
+                    // Input to output
+                    let input_idx = gene.input_index() % inputs.len();
+                    let output_idx = gene.output_index() % outputs.len();
+                    *io_weights.entry((input_idx, output_idx)).or_insert(0.0) += weight;
+                },
+                (true, false) => {
+                    // Internal to output
+                    let neuron_idx = gene.input_index() % internal_neurons_count;
+                    let output_idx = gene.output_index() % outputs.len();
+                    *oi_weights.entry((neuron_idx, output_idx)).or_insert(0.0) += weight;
+                },
+                (false, true) => {
+                    // Input to internal
+                    let input_idx = gene.input_index() % inputs.len();
+                    let neuron_idx = gene.output_index() % internal_neurons_count;
+                    *ii_weights.entry((input_idx, neuron_idx)).or_insert(0.0) += weight;
+                },
+                (true, true) => {
+                    // Internal to internal
+                    let from_idx = gene.input_index() % internal_neurons_count;
+                    let to_idx = gene.output_index() % internal_neurons_count;
+                    // Handled separately below
+                }
+            }
+        }
+        
+        // Convert accumulated weights to connection vectors
+        for ((input_idx, output_idx), weight) in io_weights {
+            input_to_output.push((input_idx, output_idx, weight));
+        }
+        
+        for ((input_idx, neuron_idx), weight) in ii_weights {
+            input_to_internal.push((input_idx, neuron_idx, weight));
+        }
+        
+        for ((neuron_idx, output_idx), weight) in oi_weights {
+            internal_to_output.push((neuron_idx, output_idx, weight));
+        }
+        
+        // Create the adjacency list of the internal network
+        let mut adjacency_list: Vec<Vec<(usize, f32)>> = vec![Vec::new(); internal_neurons_count];
+        let mut self_weights: Vec<f32> = vec![0.0; internal_neurons_count];
+        
+        // Process internal-to-internal connections
+        for gene in genome.genes() {
+            if gene.is_from_internal() && gene.is_to_internal() {
+                let from_idx = gene.input_index() % internal_neurons_count;
+                let to_idx = gene.output_index() % internal_neurons_count;
+                let weight = gene.weight() as isize as f32 / MAX_WEIGHT;
+                
+                if from_idx == to_idx {
+                    // Self-connection
+                    self_weights[from_idx] += weight;
+                } else {
+                    // Connection to another neuron
+                    adjacency_list[to_idx].push((from_idx, weight));
+                }
+            }
+        }
+        
+        // Calculate the topological order for execution
+        let computation_order = Self::compute_topological_order(&adjacency_list, internal_neurons_count);
+        
+        // Create the neural network
+        NeuralNetwork {
+            num_internal_neurons: internal_neurons_count,
+            input_indices,
+            output_indices,
+            input_to_internal,
+            internal_to_output,
+            input_to_output,
+            internal_weights: adjacency_list,
+            self_weights,
+            neuron_values: vec![0.0; internal_neurons_count],
+            neuron_previous: vec![0.0; internal_neurons_count],
+            computation_order,
+        }
+    }
+    
+    /// Compute an efficient topological ordering of neurons for forward propagation
+    fn compute_topological_order(adjacency_list: &[Vec<(usize, f32)>], num_neurons: usize) -> Vec<usize> {
+        // A simple implementation of Kahn's algorithm for topological sorting
+        let mut in_degree = vec![0; num_neurons];
+        let mut result = Vec::with_capacity(num_neurons);
+        
+        // Calculate in-degrees
+        for connections in adjacency_list {
+            for &(src, _) in connections {
+                in_degree[src] += 1;
+            }
+        }
+        
+        // Start with nodes that have no incoming edges
+        let mut queue: Vec<usize> = (0..num_neurons)
+            .filter(|&i| in_degree[i] == 0)
+            .collect();
+            
+        while let Some(node) = queue.pop() {
+            result.push(node);
+            
+            // Reduce in-degree for all neighbors
+            for &(neighbor, _) in &adjacency_list[node] {
+                in_degree[neighbor] -= 1;
+                if in_degree[neighbor] == 0 {
+                    queue.push(neighbor);
+                }
+            }
+        }
+        
+        // If we have a cycle, just return nodes in their order (could be improved)
+        if result.len() < num_neurons {
+            for i in 0..num_neurons {
+                if !result.contains(&i) {
+                    result.push(i);
+                }
+            }
+        }
+        
+        result
+    }
 }

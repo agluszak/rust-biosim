@@ -19,6 +19,7 @@ pub struct Settings {
     pub base_speed: f32,
     pub brain_inputs: Vec<neural_network::Input>,
     pub brain_outputs: Vec<neural_network::Output>,
+    pub rendering_enabled: bool,
 }
 
 pub const MEMORY_SIZE: usize = 4;
@@ -78,6 +79,7 @@ impl Default for Settings {
             base_speed: 1.0,
             brain_inputs,
             brain_outputs,
+            rendering_enabled: true,
         }
     }
 }

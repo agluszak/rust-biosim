@@ -18,6 +18,7 @@ use parry2d::na::{Rotation2, Vector2, distance};
 use rand::prelude::IndexedRandom;
 use rand::random;
 use std::time::Instant;
+use bevy::input::keyboard::{KeyCode, KeyboardInput};
 
 fn main() {
     App::new()
@@ -32,14 +33,15 @@ fn main() {
         }))
         .add_plugins(ShapePlugin)
         .add_systems(Startup, setup_system)
-        .add_systems(Update, display_system)
+        .add_systems(Update, render_toggle_system)
+        .add_systems(Update, display_system.run_if(rendering_enabled))
+        .add_systems(Update, text_update_system.run_if(rendering_enabled))
+        .add_systems(Update, transparency_system.run_if(rendering_enabled))
         .add_systems(Update, movement_system)
         .add_systems(Update, brain_input_collection_system)
         .add_systems(Update, thinking_system)
         .add_systems(Update, doing_system)
         .add_systems(Update, time_system)
-        .add_systems(Update, text_update_system)
-        .add_systems(Update, transparency_system)
         .add_systems(
             Update,
             (
@@ -51,6 +53,29 @@ fn main() {
                 .chain(),
         )
         .run();
+}
+
+// Check if rendering is enabled
+fn rendering_enabled(settings: Res<Settings>) -> bool {
+    settings.rendering_enabled
+}
+
+// Toggle rendering with the 'R' key
+fn render_toggle_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<Settings>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyR) {
+        settings.rendering_enabled = !settings.rendering_enabled;
+        println!(
+            "Rendering {}",
+            if settings.rendering_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
 }
 
 #[derive(Component)]
@@ -226,9 +251,8 @@ fn time_system(
 
 fn thinking_system(mut query: Query<(&mut Brain, &BrainInputs, &mut BrainOutputs), With<Alive>>) {
     query
-        .iter_mut()
+        .par_iter_mut()
         .for_each(|(mut brain, brain_inputs, mut brain_outputs)| {
-            // TODO: make parallel
             let outputs = brain.0.think(brain_inputs.read());
             *brain_outputs = BrainOutputs::from_hashmap(outputs);
         });
