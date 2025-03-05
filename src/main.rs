@@ -11,6 +11,7 @@ use crate::specimen::{
 };
 use bevy::DefaultPlugins;
 use bevy::app::{App, Startup, Update};
+use bevy::input::keyboard::{KeyCode, KeyboardInput};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_prototype_lyon::prelude::*;
@@ -18,7 +19,6 @@ use parry2d::na::{Rotation2, Vector2, distance};
 use rand::prelude::IndexedRandom;
 use rand::random;
 use std::time::Instant;
-use bevy::input::keyboard::{KeyCode, KeyboardInput};
 
 fn main() {
     App::new()
@@ -61,10 +61,7 @@ fn rendering_enabled(settings: Res<Settings>) -> bool {
 }
 
 // Toggle rendering with the 'R' key
-fn render_toggle_system(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut settings: ResMut<Settings>,
-) {
+fn render_toggle_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
     if keyboard_input.just_pressed(KeyCode::KeyR) {
         settings.rendering_enabled = !settings.rendering_enabled;
         println!(
