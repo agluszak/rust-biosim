@@ -196,7 +196,7 @@ pub struct SpecimenBundle {
     brain_inputs: BrainInputs,
     brain_outputs: BrainOutputs,
     health: Health,
-    hunger: Hunger,  // Add hunger component
+    hunger: Hunger, // Add hunger component
     alive: Alive,
     size: Size,
     age: Age,

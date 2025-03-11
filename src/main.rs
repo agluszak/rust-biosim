@@ -5,9 +5,9 @@ mod specimen;
 
 use crate::settings::{MEMORY_SIZE, Settings};
 use crate::specimen::{
-    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, DeathTurn, Direction, 
-    Food, Genome, Health, Hunger, Memory, NeuronValue, NeuronValueConvertible, Oscillator, 
-    Position, PreviousPosition, SpecimenBundle, SpeedMultiplier, Size,
+    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, DeathTurn, Direction, Food, Genome,
+    Health, Hunger, Memory, NeuronValue, NeuronValueConvertible, Oscillator, Position,
+    PreviousPosition, Size, SpecimenBundle, SpeedMultiplier,
 };
 use bevy::DefaultPlugins;
 use bevy::app::{App, Startup, Update};
@@ -33,10 +33,10 @@ fn main() {
             ..default()
         }))
         .add_plugins(ShapePlugin)
-        .add_systems(Startup, (
-            setup_system,
-            first_generation_system.after(setup_system)
-        ))
+        .add_systems(
+            Startup,
+            (setup_system, first_generation_system.after(setup_system)),
+        )
         .add_systems(Update, render_toggle_system)
         .add_systems(Update, display_system.run_if(rendering_enabled))
         .add_systems(Update, text_update_system.run_if(rendering_enabled))
@@ -51,15 +51,7 @@ fn main() {
         .add_systems(Update, hunger_system)
         .add_systems(Update, food_detection_system)
         .add_systems(Update, food_consumption_system)
-        .add_systems(
-            Update,
-            (
-                damage_system,
-                death_system,
-                mating_system,
-            )
-                .chain(),
-        )
+        .add_systems(Update, (damage_system, death_system, mating_system).chain())
         .add_systems(Update, corpse_despawn_system)
         .run();
 }
@@ -190,17 +182,13 @@ fn brain_input_collection_system(
             let memory_value = memory.0[i].clamp(-1.0, 1.0);
             brain_inputs.add(Input::Memory(i), NeuronValue::new(memory_value));
         }
-        
+
         // Add hunger input
         brain_inputs.add(
             Input::Hunger,
-            NeuronValue::from_linear(
-                hunger.0,
-                0.0,
-                100.0,
-            ),
+            NeuronValue::from_linear(hunger.0, 0.0, 100.0),
         );
-        
+
         // FoodProximity will be set in food_detection_system
     }
 }
@@ -570,26 +558,26 @@ fn food_spawn_system(
     if turn.0 % settings.food_spawn_interval != 0 {
         return;
     }
-    
+
     // Don't spawn more food if we've reached the maximum
     let current_food_count = food_query.iter().count();
     if current_food_count >= settings.max_food_entities {
         return;
     }
-    
+
     // Spawn food at random position
     let food_position = Position(parry2d::na::Point2::new(
         rand::random::<f32>() * settings.world_size - settings.world_half_size,
         rand::random::<f32>() * settings.world_size - settings.world_half_size,
     ));
-    
+
     // Create food shape as a green rectangle
     let food_size = 5.0;
     let shape = shapes::Rectangle {
         extents: Vec2::new(food_size, food_size),
         ..default()
     };
-    
+
     commands.spawn((
         Food,
         food_position,
@@ -610,7 +598,7 @@ fn hunger_system(
     for (mut hunger, mut health) in query.iter_mut() {
         // Decrease hunger over time
         hunger.0 = (hunger.0 - settings.hunger_decrease_rate).max(0.0);
-        
+
         // Apply damage if starving
         if hunger.0 <= 0.0 {
             health.0 -= settings.hunger_damage_rate;
@@ -625,21 +613,21 @@ fn food_detection_system(
     settings: Res<Settings>,
 ) {
     use neural_network::Input;
-    
+
     for (specimen_pos, mut brain_inputs) in specimen_query.iter_mut() {
         // Find the closest food
         let mut closest_distance = f32::MAX;
-        
+
         for food_pos in food_query.iter() {
             let distance = parry2d::na::distance(&specimen_pos.0, &food_pos.0);
             closest_distance = closest_distance.min(distance);
         }
-        
+
         // If no food is found, set to maximum distance
         if closest_distance == f32::MAX {
             closest_distance = settings.world_size * std::f32::consts::SQRT_2;
         }
-        
+
         // Add food proximity as brain input
         brain_inputs.add(
             Input::FoodProximity,
@@ -664,36 +652,36 @@ fn food_consumption_system(
         .iter()
         .map(|(entity, pos)| (entity, pos.0, false))
         .collect();
-    
+
     // For each specimen, find the closest unconsumed food item
     for (specimen_pos, specimen_size, mut hunger) in specimen_query.iter_mut() {
         let mut closest_food_idx = None;
         let mut closest_distance = f32::MAX;
-        
+
         // Find closest unconsumed food
         for (idx, (_, food_pos, consumed)) in food_items.iter().enumerate() {
             if *consumed {
                 continue; // Skip already consumed food
             }
-            
+
             let distance = distance(&specimen_pos.0, food_pos);
-            
+
             if distance < specimen_size.0 && distance < closest_distance {
                 closest_distance = distance;
                 closest_food_idx = Some(idx);
             }
         }
-        
+
         // If found a food item within range, consume it
         if let Some(idx) = closest_food_idx {
             // Mark food as consumed
             food_items[idx].2 = true;
-            
+
             // Restore hunger
             hunger.0 = (hunger.0 + settings.food_restore_amount).min(100.0);
         }
     }
-    
+
     // Despawn all consumed food
     for (entity, _, consumed) in food_items {
         if consumed {
