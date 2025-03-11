@@ -16,10 +16,27 @@ use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_prototype_lyon::prelude::*;
 use parry2d::na::{Point2, Rotation2, Vector2, distance};
-use rand::prelude::IndexedRandom;
 use rand::random;
 use rand::seq::IteratorRandom;
 use std::time::Instant;
+use kiddo::float::kdtree::KdTree;
+use kiddo::SquaredEuclidean;
+
+// Define the KdTree type we'll use
+#[derive(Resource)]
+struct SpatialMap {
+    food_tree: KdTree<f32, u64, 2, 32, u32>,      // KdTree for food positions
+    specimen_tree: KdTree<f32, u64, 2, 32, u32>,  // KdTree for specimen positions
+}
+
+impl Default for SpatialMap {
+    fn default() -> Self {
+        Self {
+            food_tree: KdTree::new(),
+            specimen_tree: KdTree::new(),
+        }
+    }
+}
 
 fn main() {
     App::new()
@@ -37,20 +54,22 @@ fn main() {
             Startup,
             (setup_system, first_generation_system.after(setup_system)),
         )
+        .init_resource::<SpatialMap>() // Initialize the KdTree resource
         .add_systems(Update, render_toggle_system)
         .add_systems(Update, display_system.run_if(rendering_enabled))
         .add_systems(Update, text_update_system.run_if(rendering_enabled))
         .add_systems(Update, transparency_system.run_if(rendering_enabled))
         .add_systems(Update, aging_system)
         .add_systems(Update, movement_system)
+        .add_systems(Update, update_spatial_map) // Add system to update the KdTree
         .add_systems(Update, brain_input_collection_system)
         .add_systems(Update, thinking_system)
         .add_systems(Update, doing_system)
         .add_systems(Update, time_system)
         .add_systems(Update, food_spawn_system)
         .add_systems(Update, hunger_system)
-        .add_systems(Update, food_detection_system)
-        .add_systems(Update, food_consumption_system)
+        .add_systems(Update, food_detection_system_kdtree) // Use the new KdTree-based system
+        .add_systems(Update, food_consumption_system_kdtree) // Use the new KdTree-based system
         .add_systems(Update, (damage_system, death_system, mating_system).chain())
         .add_systems(Update, corpse_despawn_system)
         .run();
@@ -86,7 +105,7 @@ struct Turn(u32);
 struct Generation(u32);
 
 #[derive(Resource)]
-struct GenerationStartTime(std::time::Instant);
+struct GenerationStartTime(Instant);
 
 #[derive(Component)]
 struct TurnText;
@@ -327,7 +346,7 @@ fn movement_system(
 
         // Move with the age-adjusted speed
         position.0 +=
-            direction.0 * parry2d::na::Vector2::new(effective_speed * settings.base_speed, 0.0);
+            direction.0 * Vector2::new(effective_speed * settings.base_speed, 0.0);
 
         // Clamp position to world boundaries
         position.0.x = position
@@ -392,19 +411,12 @@ fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
-fn is_first_turn(generation: Res<Generation>, turn: Res<Turn>) -> bool {
-    generation.0 == 0 && turn.0 == 0
-}
-
 fn first_generation_system(mut commands: Commands, settings: Res<Settings>) {
     info!("First generation");
     // Initialize the first generation with random genomes
     for _ in 0..settings.population {
         let genome = genome::Genome::random(settings.genome_length);
-        let position = Position(parry2d::na::Point2::new(
-            rand::random::<f32>() * settings.world_size - settings.world_half_size,
-            rand::random::<f32>() * settings.world_size - settings.world_half_size,
-        ));
+        let position = Position::random(&settings);
         commands.spawn(SpecimenBundle::new(
             Genome(genome),
             &settings.brain_inputs,
@@ -500,12 +512,12 @@ fn mating_system(
             if let Some((_entity_b, pos_b, genome_b, _)) = specimens
                 .iter()
                 .filter(|(e, _, _, _)| e != entity_a) // Don't mate with self
-                .choose(&mut rand::thread_rng())
+                .choose(&mut rand::rng())
             {
                 // Create new specimen at midpoint between parents
                 let new_x = (pos_a.0.x + pos_b.0.x) / 2.0;
                 let new_y = (pos_a.0.y + pos_b.0.y) / 2.0;
-                let new_position = Position(parry2d::na::Point2::new(new_x, new_y));
+                let new_position = Position(Point2::new(new_x, new_y));
 
                 // Crossover and mutate the genomes
                 let mut genome = genome::Genome::crossover(&genome_a.0, &genome_b.0);
@@ -566,10 +578,7 @@ fn food_spawn_system(
     }
 
     // Spawn food at random position
-    let food_position = Position(parry2d::na::Point2::new(
-        rand::random::<f32>() * settings.world_size - settings.world_half_size,
-        rand::random::<f32>() * settings.world_size - settings.world_half_size,
-    ));
+    let food_position = Position::random(&settings);
 
     // Create food shape as a green rectangle
     let food_size = 5.0;
@@ -606,86 +615,100 @@ fn hunger_system(
     }
 }
 
-// Detect closest food for each specimen
-fn food_detection_system(
-    mut specimen_query: Query<(&Position, &mut BrainInputs), With<Alive>>,
-    food_query: Query<&Position, With<Food>>,
+
+// System to rebuild the KdTree every frame
+fn update_spatial_map(
+    mut spatial_map: ResMut<SpatialMap>,
+    specimen_query: Query<(Entity, &Position), With<Alive>>,
+    food_query: Query<(Entity, &Position), With<Food>>,
+) {
+    // Clear the existing trees
+    spatial_map.specimen_tree = KdTree::new();
+    spatial_map.food_tree = KdTree::new();
+    
+    // Add all specimens to the tree
+    for (entity, position) in specimen_query.iter() {
+        let pos = [position.0.x, position.0.y];
+        spatial_map.specimen_tree.add(&pos, entity.index() as u64);
+    }
+    
+    // Add all food items to the tree
+    for (entity, position) in food_query.iter() {
+        let pos = [position.0.x, position.0.y];
+        spatial_map.food_tree.add(&pos, entity.index() as u64);
+    }
+}
+
+// Updated food detection system that uses the KdTree for efficient lookup
+fn food_detection_system_kdtree(
+    mut specimen_query: Query<(Entity, &Position, &mut BrainInputs), With<Alive>>,
+    spatial_map: Res<SpatialMap>,
     settings: Res<Settings>,
 ) {
     use neural_network::Input;
-
-    for (specimen_pos, mut brain_inputs) in specimen_query.iter_mut() {
-        // Find the closest food
-        let mut closest_distance = f32::MAX;
-
-        for food_pos in food_query.iter() {
-            let distance = parry2d::na::distance(&specimen_pos.0, &food_pos.0);
-            closest_distance = closest_distance.min(distance);
-        }
-
-        // If no food is found, set to maximum distance
-        if closest_distance == f32::MAX {
-            closest_distance = settings.world_size * std::f32::consts::SQRT_2;
-        }
-
+    
+    for (_, position, mut brain_inputs) in specimen_query.iter_mut() {
+        let specimen_pos = [position.0.x, position.0.y];
+        let max_distance = settings.world_size * std::f32::consts::SQRT_2;
+        
+        // Find the closest food using the KdTree nearest_n
+        let nearest = spatial_map.food_tree.nearest_n::<SquaredEuclidean>(&specimen_pos, 1);
+        
+        let closest_distance = if !nearest.is_empty() {
+            // Convert squared distance to normal distance
+            nearest[0].distance.sqrt()
+        } else {
+            max_distance
+        };
+        
         // Add food proximity as brain input
         brain_inputs.add(
             Input::FoodProximity,
             NeuronValue::from_linear(
                 closest_distance,
                 0.0,
-                settings.world_size * std::f32::consts::SQRT_2,
+                max_distance,
             ),
         );
     }
 }
 
-// Check for collisions between specimens and food
-fn food_consumption_system(
+// Updated food consumption system that uses the KdTree for efficient lookup
+fn food_consumption_system_kdtree(
     mut commands: Commands,
-    mut specimen_query: Query<(&Position, &Size, &mut Hunger), With<Alive>>,
+    mut specimen_query: Query<(Entity, &Position, &Size, &mut Hunger), With<Alive>>,
     food_query: Query<(Entity, &Position), With<Food>>,
+    spatial_map: Res<SpatialMap>,
     settings: Res<Settings>,
 ) {
-    // Store all food items with a consumed flag
-    let mut food_items: Vec<(Entity, Point2<f32>, bool)> = food_query
-        .iter()
-        .map(|(entity, pos)| (entity, pos.0, false))
-        .collect();
-
-    // For each specimen, find the closest unconsumed food item
-    for (specimen_pos, specimen_size, mut hunger) in specimen_query.iter_mut() {
-        let mut closest_food_idx = None;
-        let mut closest_distance = f32::MAX;
-
-        // Find closest unconsumed food
-        for (idx, (_, food_pos, consumed)) in food_items.iter().enumerate() {
-            if *consumed {
-                continue; // Skip already consumed food
-            }
-
-            let distance = distance(&specimen_pos.0, food_pos);
-
-            if distance < specimen_size.0 && distance < closest_distance {
-                closest_distance = distance;
-                closest_food_idx = Some(idx);
-            }
-        }
-
-        // If found a food item within range, consume it
-        if let Some(idx) = closest_food_idx {
-            // Mark food as consumed
-            food_items[idx].2 = true;
-
+    // Keep track of which food items have been consumed
+    let mut consumed_food = Vec::new();
+    
+    for (_, position, size, mut hunger) in specimen_query.iter_mut() {
+        let specimen_pos = [position.0.x, position.0.y];
+        
+        // Find food within eating range using KdTree
+        let in_range_food = spatial_map.food_tree.within_unsorted::<SquaredEuclidean>(&specimen_pos, size.0 * size.0);
+        
+        // Only consume one food item per turn - the closest one
+        if !in_range_food.is_empty() && !consumed_food.contains(&in_range_food[0].item) {
+            // Record that this food has been consumed
+            consumed_food.push(in_range_food[0].item);
+            
             // Restore hunger
             hunger.0 = (hunger.0 + settings.food_restore_amount).min(100.0);
         }
     }
-
-    // Despawn all consumed food
-    for (entity, _, consumed) in food_items {
-        if consumed {
-            commands.entity(entity).despawn();
+    
+    // Despawn all consumed food items
+    for food_idx in consumed_food {
+        // Convert the index back to an Entity
+        for (entity, _) in food_query.iter() {
+            if entity.index() as u64 == food_idx {
+                commands.entity(entity).despawn();
+                break;
+            }
         }
     }
 }
+

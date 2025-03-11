@@ -40,6 +40,15 @@ pub struct Size(pub f32);
 #[derive(Component, Debug)]
 pub struct Position(pub parry2d::na::Point2<f32>);
 
+impl Position {
+    pub fn random(settings: &crate::Settings) -> Self {
+        Position(parry2d::na::Point2::new(
+            random::<f32>() * settings.world_size - settings.world_half_size,
+            random::<f32>() * settings.world_size - settings.world_half_size,
+        ))
+    }
+}
+
 #[derive(Component, Debug)]
 pub struct Direction(pub parry2d::na::Rotation2<f32>);
 
