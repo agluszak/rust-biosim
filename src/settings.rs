@@ -20,6 +20,7 @@ pub struct Settings {
     pub brain_inputs: Vec<neural_network::Input>,
     pub brain_outputs: Vec<neural_network::Output>,
     pub rendering_enabled: bool,
+    pub old_age: u32,
     pub old_age_damage_rate: f32,
     pub max_age: u32,
     pub corpse_despawn_delay: u32, // How many turns to wait before despawning dead specimens
@@ -76,9 +77,9 @@ impl Default for Settings {
             specimen_size: 1.0,
             world_size,
             world_half_size: world_size / 2.0,
-            population: 150,
+            population: 250,
             internal_neurons: 30,
-            genome_length: 70,
+            genome_length: 100,
             mutation_chance: 0.01,
             turns_per_generation: 150,
             proximity_distance: 3.0,
@@ -90,14 +91,15 @@ impl Default for Settings {
             brain_inputs,
             brain_outputs,
             rendering_enabled: true,
-            old_age_damage_rate: 0.1,
-            max_age: 500, // Maximum age a specimen can live to before forced death
+            old_age: 700, // Age at which specimens start taking damage
+            old_age_damage_rate: 0.5, // Increased from 0.1 to make age more impactful
+            max_age: 800, // Maximum age a specimen can live to before forced death
             corpse_despawn_delay: 30, // Despawn dead specimens after 30 turns
-            hunger_damage_rate: 0.5, // Hunger damage per turn when starving
-            hunger_decrease_rate: 0.2, // Hunger decreases by this amount each turn
-            food_spawn_interval: 100, // Food spawns every 100 turns
+            hunger_damage_rate: 1.0, // Doubled from 0.5 to make hunger more dangerous
+            hunger_decrease_rate: 2.0, // Hunger decreases by this amount each turn
+            food_spawn_interval: 2, // Food spawns every 100 turns
             food_restore_amount: 50.0, // Food restores 50 hunger points
-            max_food_entities: 20, // Maximum of 20 food entities in the world
+            max_food_entities: 100, // Maximum of 20 food entities in the world
         }
     }
 }

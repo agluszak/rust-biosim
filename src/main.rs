@@ -25,8 +25,8 @@ use kiddo::SquaredEuclidean;
 // Define the KdTree type we'll use
 #[derive(Resource)]
 struct SpatialMap {
-    food_tree: KdTree<f32, u64, 2, 32, u32>,      // KdTree for food positions
-    specimen_tree: KdTree<f32, u64, 2, 32, u32>,  // KdTree for specimen positions
+    food_tree: KdTree<f32, u64, 2, 128, u32>,      // KdTree for food positions
+    specimen_tree: KdTree<f32, u64, 2, 128, u32>,  // KdTree for specimen positions
 }
 
 impl Default for SpatialMap {
@@ -112,11 +112,11 @@ struct TurnText;
 
 #[inline]
 fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> f32 {
-    assert!(from_min <= from_max);
-    assert!(to_min <= to_max);
-    assert!(value >= from_min && value <= from_max);
+    assert!(from_min <= from_max, "from_min: {}, from_max: {}", from_min, from_max);
+    assert!(to_min <= to_max, "to_min: {}, to_max: {}", to_min, to_max);
+    assert!(value >= from_min && value <= from_max, "value: {}, from_min: {}, from_max: {}", value, from_min, from_max);
     let value = (value - from_min) / (from_max - from_min) * (to_max - to_min) + to_min;
-    assert!(value >= to_min && value <= to_max);
+    assert!(value >= to_min && value <= to_max, "value: {}, to_min: {}, to_max: {}", value, to_min, to_max);
     value
 }
 
@@ -222,7 +222,8 @@ fn time_system(
     if turn.0 % settings.turns_per_generation == 0 {
         generation.0 += 1;
         println!(
-            "Time: {}, alive: {}",
+            "[{}] Time: {}, alive: {}",
+            generation.0,
             generation_start.0.elapsed().as_secs_f64(),
             query.iter().count()
         );
@@ -251,7 +252,7 @@ fn aging_system(
             map_range(relative_age, 0.0, 0.3, 0.7, 1.0)
         } else if relative_age > 0.7 {
             // Very old specimens shrink
-            map_range(relative_age, 0.7, 1.0, 1.0, 0.6)
+            1.0 - map_range(relative_age, 0.7, 1.0, 0.6, 1.0)
         } else {
             // Middle-aged specimens maintain size
             1.0
@@ -364,11 +365,10 @@ fn movement_system(
 
 fn text_update_system(
     turn: Res<Turn>,
-    generation: Res<Generation>,
     mut query: Query<&mut Text, With<TurnText>>,
 ) {
     for mut text in query.iter_mut() {
-        text.0 = format!("Generation: {}\nTurn: {}", generation.0, turn.0);
+        text.0 = format!("Turn: {}", turn.0);
     }
 }
 
@@ -428,23 +428,13 @@ fn first_generation_system(mut commands: Commands, settings: Res<Settings>) {
 }
 
 fn damage_system(
-    mut query: Query<(&Position, &mut Health, &Age), With<Alive>>,
+    mut query: Query<(&mut Health, &Age), With<Alive>>,
     settings: Res<Settings>,
 ) {
-    for (position, mut health, age) in query.iter_mut() {
-        let damage = if position.0.x <= 0.0 || position.0.y <= 0.0 {
-            let distance_from_goal =
-                ((-position.0.x).max(0.0).powi(2) + (-position.0.y).max(0.0).powi(2)).sqrt();
-            // Convert distance to damage - further means more damage
-            4.0 * distance_from_goal / settings.world_half_size
-        } else {
-            0.0
-        };
-        health.0 -= damage;
-
-        // Apply additional damage for old age
-        if age.0 > 300 {
-            health.0 -= (age.0 - 300) as f32 * settings.old_age_damage_rate;
+    for (mut health, age) in query.iter_mut() {
+        // Apply damage for old age starting at age 200 (previously 300)
+        if age.0 > settings.old_age {
+            health.0 -= (age.0 - settings.old_age) as f32 * settings.old_age_damage_rate;
         }
 
         // Apply death from old age if they've reached maximum age
