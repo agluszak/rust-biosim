@@ -20,6 +20,14 @@ pub struct Settings {
     pub brain_inputs: Vec<neural_network::Input>,
     pub brain_outputs: Vec<neural_network::Output>,
     pub rendering_enabled: bool,
+    pub old_age_damage_rate: f32,
+    pub max_age: u32,
+    pub corpse_despawn_delay: u32, // How many turns to wait before despawning dead specimens
+    pub hunger_damage_rate: f32,    // Rate at which hunger causes damage
+    pub hunger_decrease_rate: f32,  // Rate at which hunger decreases each turn
+    pub food_spawn_interval: u32,   // How often food spawns (in turns)
+    pub food_restore_amount: f32,   // How much hunger is restored when eating food
+    pub max_food_entities: usize,   // Maximum number of food entities in the world
 }
 
 pub const MEMORY_SIZE: usize = 4;
@@ -38,6 +46,8 @@ impl Default for Settings {
                 Input::Random,
                 Input::DistanceToBirthplace,
                 Input::DistanceTravelled,
+                Input::Hunger,        // Add Hunger input
+                Input::FoodProximity, // Add FoodProximity input
             ];
             brain_inputs.extend((0..MEMORY_SIZE).map(Input::Memory));
             brain_inputs
@@ -80,6 +90,14 @@ impl Default for Settings {
             brain_inputs,
             brain_outputs,
             rendering_enabled: true,
+            old_age_damage_rate: 0.1,
+            max_age: 500, // Maximum age a specimen can live to before forced death
+            corpse_despawn_delay: 30, // Despawn dead specimens after 30 turns
+            hunger_damage_rate: 0.5,  // Hunger damage per turn when starving
+            hunger_decrease_rate: 0.2, // Hunger decreases by this amount each turn
+            food_spawn_interval: 100, // Food spawns every 100 turns
+            food_restore_amount: 50.0, // Food restores 50 hunger points
+            max_food_entities: 20,    // Maximum of 20 food entities in the world
         }
     }
 }

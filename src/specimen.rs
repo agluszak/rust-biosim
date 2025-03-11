@@ -9,6 +9,9 @@ use std::collections::HashMap;
 pub struct Health(pub f32);
 
 #[derive(Component, Debug)]
+pub struct Hunger(pub f32);
+
+#[derive(Component, Debug)]
 pub struct SpeedMultiplier(pub f32);
 
 impl SpeedMultiplier {
@@ -79,6 +82,9 @@ pub struct Brain(pub neural_network::NeuralNetwork);
 
 #[derive(Component)]
 pub struct Alive;
+
+#[derive(Component)]
+pub struct DeathTurn(pub u32); // Store the turn number when the specimen died
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct NeuronInput(f32);
@@ -190,7 +196,10 @@ pub struct SpecimenBundle {
     brain_inputs: BrainInputs,
     brain_outputs: BrainOutputs,
     health: Health,
+    hunger: Hunger,  // Add hunger component
     alive: Alive,
+    size: Size,
+    age: Age,
     #[bundle()]
     shape_bundle: ShapeBundle,
     fill: Fill,
@@ -199,39 +208,34 @@ pub struct SpecimenBundle {
 
 impl SpecimenBundle {
     pub fn new(
-        world_size: f32,
         genome: Genome,
         inputs: &[neural_network::Input],
         outputs: &[neural_network::Output],
         internal_neurons: usize,
+        position: Position,
     ) -> Self {
         let speed = SpeedMultiplier::default(); // TODO this is a speed multiplier
-        let position = Position(parry2d::na::Point2::new(
-            rand::random::<f32>() * world_size - world_size / 2.0,
-            rand::random::<f32>() * world_size - world_size / 2.0,
-        ));
         let previous_position = PreviousPosition(position.0);
         let birthplace = Birthplace(position.0);
         let direction = Direction(parry2d::na::Rotation2::new(
             random::<f32>() * 2.0 * std::f32::consts::PI,
         ));
 
+        // Set initial size
+        let size = Size(10.0);
+
         let shape = shapes::Circle {
-            radius: 10.0,
+            radius: size.0,
             center: Vec2::new(0.0, 0.0),
         };
-
         let path = GeometryBuilder::build_as(&shape);
-
         let shape_bundle = ShapeBundle { path, ..default() };
-
         let brain = Brain(neural_network::NeuralNetwork::from_genome(
             &genome.0,
             inputs,
             outputs,
             internal_neurons,
         ));
-
         let brain_inputs = BrainInputs::default();
         let brain_outputs = BrainOutputs::default();
 
@@ -248,10 +252,17 @@ impl SpecimenBundle {
             brain_inputs,
             brain_outputs,
             health: Health(100.0),
+            hunger: Hunger(100.0), // Start with full belly
             alive: Alive,
+            size,
+            age: Age(0), // Starting age is 0
             shape_bundle,
             fill: Fill::color(Color::srgb(random(), random(), random())),
             stroke: Stroke::new(Color::BLACK, 1.0),
         }
     }
 }
+
+// Add a component to mark food entities
+#[derive(Component)]
+pub struct Food;

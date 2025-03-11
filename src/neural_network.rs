@@ -24,6 +24,8 @@ pub enum Input {
     Oscillator2, // PI * time * 25 / max_time
     Oscillator3, // PI * time * 125 / max_time
     Memory(usize),
+    Hunger,       // Add hunger input
+    FoodProximity, // Add food proximity input
     // Energy,
     // Health,
 }
