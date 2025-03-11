@@ -7,7 +7,7 @@ use crate::settings::{MEMORY_SIZE, Settings};
 use crate::specimen::{
     Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, DeathTurn, Direction, Food, Genome,
     Health, Hunger, Memory, NeuronValue, NeuronValueConvertible, Oscillator, Position,
-    PreviousPosition, Size, SpecimenBundle, SpeedMultiplier,
+    PreviousPosition, SimulationEntity, Size, SpecimenBundle, SpeedMultiplier,
 };
 use bevy::DefaultPlugins;
 use bevy::app::{App, Startup, Update};
@@ -38,6 +38,28 @@ impl Default for SpatialMap {
     }
 }
 
+#[derive(Resource)]
+struct LastUpdateTime(Instant);
+
+impl Default for LastUpdateTime {
+    fn default() -> Self {
+        Self(Instant::now())
+    }
+}
+
+fn should_update_simulation(settings: Res<Settings>, last_update: Res<LastUpdateTime>) -> bool {
+    if !settings.slow_mode {
+        return true;
+    }
+    let now = Instant::now();
+    let elapsed = now.duration_since(last_update.0);
+    elapsed.as_secs_f32() >= 0.3
+}
+
+fn update_timestamp(mut last_update: ResMut<LastUpdateTime>) {
+    last_update.0 = Instant::now();
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -55,23 +77,35 @@ fn main() {
             (setup_system, first_generation_system.after(setup_system)),
         )
         .init_resource::<SpatialMap>() // Initialize the KdTree resource
+        .init_resource::<LastUpdateTime>() // Initialize the LastUpdateTime resource
         .add_systems(Update, render_toggle_system)
+        .add_systems(Update, slow_mode_toggle_system)
+        // Visual systems run always
         .add_systems(Update, display_system.run_if(rendering_enabled))
         .add_systems(Update, text_update_system.run_if(rendering_enabled))
         .add_systems(Update, transparency_system.run_if(rendering_enabled))
-        .add_systems(Update, aging_system)
-        .add_systems(Update, movement_system)
-        .add_systems(Update, update_spatial_map) // Add system to update the KdTree
-        .add_systems(Update, brain_input_collection_system)
-        .add_systems(Update, thinking_system)
-        .add_systems(Update, doing_system)
-        .add_systems(Update, time_system)
-        .add_systems(Update, food_spawn_system)
-        .add_systems(Update, hunger_system)
-        .add_systems(Update, food_detection_system_kdtree) // Use the new KdTree-based system
-        .add_systems(Update, food_consumption_system_kdtree) // Use the new KdTree-based system
-        .add_systems(Update, (damage_system, death_system, mating_system).chain())
-        .add_systems(Update, corpse_despawn_system)
+        // Simulation systems run based on should_update_simulation
+        .add_systems(
+            Update,
+            (
+                aging_system,
+                movement_system,
+                update_spatial_map,
+                brain_input_collection_system,
+                thinking_system,
+                doing_system,
+                time_system,
+                food_spawn_system,
+                hunger_system,
+                food_detection_system_kdtree,
+                food_consumption_system_kdtree,
+                (damage_system, death_system, mating_system).chain(),
+                corpse_despawn_system,
+                update_timestamp,
+            ).chain().run_if(should_update_simulation)
+        )
+        // Control systems run always
+        .add_systems(Update, restart_system) // Add system to restart the simulation
         .run();
 }
 
@@ -87,6 +121,20 @@ fn render_toggle_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settings:
         println!(
             "Rendering {}",
             if settings.rendering_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+}
+
+fn slow_mode_toggle_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
+    if keyboard_input.just_pressed(KeyCode::KeyS) {
+        settings.slow_mode = !settings.slow_mode;
+        println!(
+            "Slow mode {}",
+            if settings.slow_mode {
                 "enabled"
             } else {
                 "disabled"
@@ -586,6 +634,7 @@ fn food_spawn_system(
         },
         Fill::color(Color::srgb(0f32, 1f32, 0f32)),
         Stroke::new(Color::BLACK, 1.0),
+        SimulationEntity,
     ));
 }
 
@@ -699,6 +748,31 @@ fn food_consumption_system_kdtree(
                 break;
             }
         }
+    }
+}
+
+fn restart_system(
+    mut commands: Commands,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut turn: ResMut<Turn>,
+    mut generation: ResMut<Generation>,
+    mut generation_start: ResMut<GenerationStartTime>,
+    settings: Res<Settings>,
+    simulation_entities: Query<Entity, With<SimulationEntity>>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Space) {
+        // Despawn all simulation entities
+        for entity in simulation_entities.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        // Reset counters
+        turn.0 = 0;
+        generation.0 = 0;
+        generation_start.0 = Instant::now();
+
+        // Use first_generation_system to spawn new specimens
+        first_generation_system(commands, settings);
     }
 }
 

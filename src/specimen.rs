@@ -213,7 +213,12 @@ pub struct SpecimenBundle {
     shape_bundle: ShapeBundle,
     fill: Fill,
     stroke: Stroke,
+    simulation_entity: SimulationEntity,
 }
+
+// Add a marker component for all simulation entities (specimens and food)
+#[derive(Component)]
+pub struct SimulationEntity;
 
 impl SpecimenBundle {
     pub fn new(
@@ -268,6 +273,7 @@ impl SpecimenBundle {
             shape_bundle,
             fill: Fill::color(Color::srgb(random(), random(), random())),
             stroke: Stroke::new(Color::BLACK, 1.0),
+            simulation_entity: SimulationEntity,
         }
     }
 }

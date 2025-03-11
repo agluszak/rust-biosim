@@ -1,5 +1,6 @@
 use crate::neural_network;
 use bevy::ecs::prelude::*;
+use std::time::Instant;
 
 #[derive(Resource, Clone, Debug)]
 pub struct Settings {
@@ -29,9 +30,11 @@ pub struct Settings {
     pub food_spawn_interval: u32,  // How often food spawns (in turns)
     pub food_restore_amount: f32,  // How much hunger is restored when eating food
     pub max_food_entities: usize,  // Maximum number of food entities in the world
+    pub slow_mode: bool,
+    pub last_update: Instant,
 }
 
-pub const MEMORY_SIZE: usize = 4;
+pub const MEMORY_SIZE: usize = 8;
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -100,6 +103,8 @@ impl Default for Settings {
             food_spawn_interval: 2, // Food spawns every 100 turns
             food_restore_amount: 50.0, // Food restores 50 hunger points
             max_food_entities: 100, // Maximum of 20 food entities in the world
+            slow_mode: false,
+            last_update: Instant::now(),
         }
     }
 }
