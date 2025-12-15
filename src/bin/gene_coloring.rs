@@ -332,7 +332,7 @@ fn main() {
 
     info!("Printing Colors");
 
-    for (genome, color) in genomes.iter().zip(colors.iter()) {
+    for (_genome, color) in genomes.iter().zip(colors.iter()) {
         println!("Genome has color RGB{:?}", color);
     }
 }

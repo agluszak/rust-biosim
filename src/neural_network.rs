@@ -191,7 +191,9 @@ impl NeuralNetwork {
                     // Internal to internal
                     let from_idx = gene.input_index() % internal_neurons_count;
                     let to_idx = gene.output_index() % internal_neurons_count;
-                    *internal_internal_weights.entry((from_idx, to_idx)).or_insert(0.0) += weight;
+                    *internal_internal_weights
+                        .entry((from_idx, to_idx))
+                        .or_insert(0.0) += weight;
                 }
             }
         }
@@ -225,7 +227,8 @@ impl NeuralNetwork {
         }
 
         // Calculate the topological order for execution
-        let computation_order = Self::compute_topological_order(&adjacency_list, internal_neurons_count);
+        let computation_order =
+            Self::compute_topological_order(&adjacency_list, internal_neurons_count);
 
         // Create the neural network
         NeuralNetwork {
@@ -291,15 +294,15 @@ impl NeuralNetwork {
     pub fn get_neuron_values(&self) -> &Vec<f32> {
         &self.neuron_values
     }
-    
+
     pub fn get_input_to_internal(&self) -> &Vec<(usize, usize, f32)> {
         &self.input_to_internal
     }
-    
+
     pub fn get_internal_to_output(&self) -> &Vec<(usize, usize, f32)> {
         &self.internal_to_output
     }
-    
+
     pub fn get_input_to_output(&self) -> &Vec<(usize, usize, f32)> {
         &self.input_to_output
     }

@@ -1,31 +1,25 @@
 use bevy::prelude::*;
-use bevy::sprite::MeshMaterial2d;
+// MeshMaterial2d now in prelude
 use bevy::window::PrimaryWindow;
 use bevy_vector_shapes::prelude::*;
 use std::collections::HashMap;
 
-use crate::specimen::{Brain, BrainInputs, BrainOutputs, OriginalColor};
 use crate::neural_network::{Input, Output};
 use crate::settings::Settings;
+use crate::specimen::{Brain, BrainInputs, BrainOutputs, OriginalColor};
 
 // Component to mark the selected specimen
 #[derive(Component)]
 pub struct SelectedSpecimen;
 
 // Resource to track which entity is selected
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct SelectedSpecimenResource {
     pub entity: Option<Entity>,
 }
 
-impl Default for SelectedSpecimenResource {
-    fn default() -> Self {
-        Self { entity: None }
-    }
-}
-
 // Resource to store brain visualization data
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct BrainVisData {
     pub input_positions: HashMap<Input, Vec2>,
     pub neuron_positions: Vec<Vec2>,
@@ -36,22 +30,11 @@ pub struct BrainVisData {
     pub connections: Vec<(Vec2, Vec2, f32)>, // (from, to, weight)
 }
 
-impl Default for BrainVisData {
-    fn default() -> Self {
-        Self {
-            input_positions: HashMap::new(),
-            neuron_positions: Vec::new(),
-            output_positions: HashMap::new(),
-            input_values: HashMap::new(),
-            neuron_values: Vec::new(),
-            output_values: HashMap::new(),
-            connections: Vec::new(),
-        }
-    }
-}
-
 // Toggle brain visualization with the 'B' key
-pub fn toggle_brain_vis_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
+pub fn toggle_brain_vis_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<Settings>,
+) {
     if keyboard_input.just_pressed(KeyCode::KeyB) {
         settings.show_brain_visualization = !settings.show_brain_visualization;
         println!(
@@ -72,8 +55,14 @@ pub fn select_specimen_system(
     camera_q: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     mut selected: ResMut<SelectedSpecimenResource>,
     specimens: Query<
-        (Entity, &Transform, &crate::specimen::Size, &MeshMaterial2d<ColorMaterial>, &OriginalColor),
-        With<crate::specimen::Alive>
+        (
+            Entity,
+            &Transform,
+            &crate::specimen::Size,
+            &MeshMaterial2d<ColorMaterial>,
+            &OriginalColor,
+        ),
+        With<crate::specimen::Alive>,
     >,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
@@ -81,21 +70,31 @@ pub fn select_specimen_system(
         return;
     }
 
-    let window = if let Ok(win) = windows.get_single() { win } else { return };
-    let (camera, camera_transform) = if let Ok(cam) = camera_q.get_single() { cam } else { return };
+    let window = if let Ok(win) = windows.single() {
+        win
+    } else {
+        return;
+    };
+    let (camera, camera_transform) = if let Ok(cam) = camera_q.single() {
+        cam
+    } else {
+        return;
+    };
 
-    let Some(cursor_position) = window.cursor_position() else { return };
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
 
-    let world_position = camera.viewport_to_world_2d(camera_transform, cursor_position)
+    let world_position = camera
+        .viewport_to_world_2d(camera_transform, cursor_position)
         .unwrap_or_default();
 
     // Clear previous selection
-    if let Some(entity) = selected.entity {
-        if let Ok((_, _, _, material_handle, original_color)) = specimens.get(entity) {
-            if let Some(material) = materials.get_mut(&material_handle.0) {
-                material.color = original_color.0; // Revert to original color
-            }
-        }
+    if let Some(entity) = selected.entity
+        && let Ok((_, _, _, material_handle, original_color)) = specimens.get(entity)
+        && let Some(material) = materials.get_mut(&material_handle.0)
+    {
+        material.color = original_color.0; // Revert to original color
     }
 
     // Check if a specimen is clicked
@@ -147,61 +146,66 @@ pub fn update_brain_vis_data(
             // Layout positions for visualization
             let window_width = settings.brain_vis_window_width;
             let window_height = settings.brain_vis_window_height;
-            
+
             // Position inputs on the left
             let input_width_offset = 50.0; // Offset from the left edge
             let input_count = settings.brain_inputs.len();
             let input_spacing = window_height / (input_count as f32 + 1.0);
-            
+
             for (i, input_type) in settings.brain_inputs.iter().enumerate() {
                 let pos = Vec2::new(
                     -window_width / 2.0 + input_width_offset,
-                    window_height / 2.0 - input_spacing * (i as f32 + 1.0) // Y inverted for top-down
+                    window_height / 2.0 - input_spacing * (i as f32 + 1.0), // Y inverted for top-down
                 );
                 brain_vis_data.input_positions.insert(*input_type, pos);
-                
+
                 if let Some(value) = inputs.read().get(input_type) {
                     brain_vis_data.input_values.insert(*input_type, *value);
                 }
             }
-            
+
             // Position neurons in the middle
             let neuron_count = settings.internal_neurons;
             let neuron_spacing = window_height / (neuron_count as f32 + 1.0);
-            
+
             for i in 0..neuron_count {
                 let pos = Vec2::new(
                     0.0,
-                    window_height / 2.0 - neuron_spacing * (i as f32 + 1.0) // Y inverted
+                    window_height / 2.0 - neuron_spacing * (i as f32 + 1.0), // Y inverted
                 );
                 brain_vis_data.neuron_positions.push(pos);
-                
+
                 let neuron_values_from_brain = brain.0.get_neuron_values();
                 if i < neuron_values_from_brain.len() {
-                    brain_vis_data.neuron_values.push(neuron_values_from_brain[i]);
+                    brain_vis_data
+                        .neuron_values
+                        .push(neuron_values_from_brain[i]);
                 } else {
                     brain_vis_data.neuron_values.push(0.0); // Default if out of bounds
                 }
             }
-            
+
             // Position outputs on the right
             let output_width_offset = 50.0; // Offset from the right edge
             let output_count = settings.brain_outputs.len();
             let output_spacing = window_height / (output_count as f32 + 1.0);
-            
+
             for (i, output_type) in settings.brain_outputs.iter().enumerate() {
                 let pos = Vec2::new(
                     window_width / 2.0 - output_width_offset,
-                    window_height / 2.0 - output_spacing * (i as f32 + 1.0) // Y inverted
+                    window_height / 2.0 - output_spacing * (i as f32 + 1.0), // Y inverted
                 );
                 brain_vis_data.output_positions.insert(*output_type, pos);
-                brain_vis_data.output_values.insert(*output_type, outputs.get(*output_type).value());
+                brain_vis_data
+                    .output_values
+                    .insert(*output_type, outputs.get(*output_type).value());
             }
-            
+
             // Extract connections
             let mut connections = Vec::new();
             for &(input_idx, neuron_idx, weight) in brain.0.get_input_to_internal() {
-                if input_idx < settings.brain_inputs.len() && neuron_idx < settings.internal_neurons {
+                if input_idx < settings.brain_inputs.len() && neuron_idx < settings.internal_neurons
+                {
                     let input_type = settings.brain_inputs[input_idx];
                     if let Some(from_pos) = brain_vis_data.input_positions.get(&input_type) {
                         let to_pos = brain_vis_data.neuron_positions[neuron_idx];
@@ -209,9 +213,11 @@ pub fn update_brain_vis_data(
                     }
                 }
             }
-            
+
             for &(neuron_idx, output_idx, weight) in brain.0.get_internal_to_output() {
-                if neuron_idx < settings.internal_neurons && output_idx < settings.brain_outputs.len() {
+                if neuron_idx < settings.internal_neurons
+                    && output_idx < settings.brain_outputs.len()
+                {
                     let output_type = settings.brain_outputs[output_idx];
                     if let Some(to_pos) = brain_vis_data.output_positions.get(&output_type) {
                         let from_pos = brain_vis_data.neuron_positions[neuron_idx];
@@ -219,14 +225,16 @@ pub fn update_brain_vis_data(
                     }
                 }
             }
-            
+
             for &(input_idx, output_idx, weight) in brain.0.get_input_to_output() {
-                if input_idx < settings.brain_inputs.len() && output_idx < settings.brain_outputs.len() {
+                if input_idx < settings.brain_inputs.len()
+                    && output_idx < settings.brain_outputs.len()
+                {
                     let input_type = settings.brain_inputs[input_idx];
                     let output_type = settings.brain_outputs[output_idx];
                     if let (Some(from_pos), Some(to_pos)) = (
                         brain_vis_data.input_positions.get(&input_type),
-                        brain_vis_data.output_positions.get(&output_type)
+                        brain_vis_data.output_positions.get(&output_type),
                     ) {
                         connections.push((*from_pos, *to_pos, weight));
                     }
@@ -257,23 +265,27 @@ pub fn update_brain_vis_data(
 
 // System to render the brain visualization using ShapePainter
 pub fn render_brain_visualization_system(
-    mut painter: ShapePainter, 
+    mut painter: ShapePainter,
     brain_vis_data: Res<BrainVisData>,
     settings: Res<Settings>,
     asset_server: Res<AssetServer>,
-    mut commands: Commands, 
+    mut commands: Commands,
     query_camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
 ) {
-    if !settings.show_brain_visualization || brain_vis_data.connections.is_empty() && brain_vis_data.input_positions.is_empty() {
+    if !settings.show_brain_visualization
+        || brain_vis_data.connections.is_empty() && brain_vis_data.input_positions.is_empty()
+    {
         return;
     }
-    
+
     let font = asset_server.load("fonts/Roboto-Regular.ttf");
     let node_radius = 10.0;
     let text_color = Color::BLACK;
     let value_text_color = Color::srgb(0.2, 0.2, 0.2);
 
-    let Ok((_camera, _camera_transform)) = query_camera.get_single() else { return };
+    let Ok((_camera, _camera_transform)) = query_camera.single() else {
+        return;
+    };
 
     // Use a fixed world position for brain visualization
     // The visualization positions are already calculated relative to (0,0)
@@ -290,7 +302,7 @@ pub fn render_brain_visualization_system(
             Color::srgba(0.0, 0.8, 0.0, weight_clamped.abs() * 0.8)
         };
         let thickness = 1.0 + 3.0 * weight_clamped.abs();
-        
+
         painter.thickness = thickness;
         painter.color = line_color;
         painter.line(from.extend(0.0), to.extend(0.0));
@@ -299,12 +311,12 @@ pub fn render_brain_visualization_system(
     // Draw input nodes
     for (input_type, pos) in &brain_vis_data.input_positions {
         let value = brain_vis_data.input_values.get(input_type).unwrap_or(&0.0);
-        let intensity = value.abs().min(1.0); 
-        let node_color = Color::srgb(0.5 + 0.5 * intensity, 0.5, 0.5 - 0.5 * intensity); 
+        let intensity = value.abs().min(1.0);
+        let node_color = Color::srgb(0.5 + 0.5 * intensity, 0.5, 0.5 - 0.5 * intensity);
 
         painter.color = node_color;
         painter.circle(node_radius);
-        
+
         // Spawn text for label
         commands.spawn((
             Text2d::new(format!("{:?}", input_type)),
@@ -314,7 +326,9 @@ pub fn render_brain_visualization_system(
                 ..default()
             },
             TextColor(text_color),
-            Transform::from_translation((brain_vis_world_center + *pos + Vec2::new(node_radius + 15.0, 0.0)).extend(11.0)),
+            Transform::from_translation(
+                (brain_vis_world_center + *pos + Vec2::new(node_radius + 15.0, 0.0)).extend(11.0),
+            ),
             BrainVisTextEntity,
         ));
         // Spawn text for value
@@ -326,7 +340,9 @@ pub fn render_brain_visualization_system(
                 ..default()
             },
             TextColor(value_text_color),
-            Transform::from_translation((brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0)),
+            Transform::from_translation(
+                (brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0),
+            ),
             BrainVisTextEntity,
         ));
     }
@@ -335,7 +351,7 @@ pub fn render_brain_visualization_system(
     for (i, pos) in brain_vis_data.neuron_positions.iter().enumerate() {
         let value = brain_vis_data.neuron_values.get(i).unwrap_or(&0.0);
         let intensity = value.abs().min(1.0);
-        let node_color = Color::srgb(0.5, 0.5 + 0.5 * intensity, 0.5 - 0.5 * intensity); 
+        let node_color = Color::srgb(0.5, 0.5 + 0.5 * intensity, 0.5 - 0.5 * intensity);
 
         painter.color = node_color;
         painter.circle(node_radius);
@@ -349,14 +365,19 @@ pub fn render_brain_visualization_system(
                 ..default()
             },
             TextColor(value_text_color),
-            Transform::from_translation((brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0)),
+            Transform::from_translation(
+                (brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0),
+            ),
             BrainVisTextEntity,
         ));
     }
 
     // Draw output nodes
     for (output_type, pos) in &brain_vis_data.output_positions {
-        let value = brain_vis_data.output_values.get(output_type).unwrap_or(&0.0);
+        let value = brain_vis_data
+            .output_values
+            .get(output_type)
+            .unwrap_or(&0.0);
         let intensity = value.abs().min(1.0);
         let node_color = Color::srgb(0.5 - 0.5 * intensity, 0.5, 0.5 + 0.5 * intensity);
 
@@ -372,7 +393,9 @@ pub fn render_brain_visualization_system(
                 ..default()
             },
             TextColor(text_color),
-            Transform::from_translation((brain_vis_world_center + *pos + Vec2::new(node_radius + 15.0, 0.0)).extend(11.0)),
+            Transform::from_translation(
+                (brain_vis_world_center + *pos + Vec2::new(node_radius + 15.0, 0.0)).extend(11.0),
+            ),
             BrainVisTextEntity,
         ));
         // Spawn text for value
@@ -384,11 +407,13 @@ pub fn render_brain_visualization_system(
                 ..default()
             },
             TextColor(value_text_color),
-            Transform::from_translation((brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0)),
+            Transform::from_translation(
+                (brain_vis_world_center + *pos - Vec2::new(0.0, node_radius + 10.0)).extend(11.0),
+            ),
             BrainVisTextEntity,
         ));
     }
-    
+
     painter.thickness = 1.0;
     painter.color = Color::WHITE;
 }
@@ -411,13 +436,13 @@ pub fn cleanup_brain_vis_text_system(
     let current_selected_entity = selected.entity;
 
     // Despawn text if visualization is turned off OR if the selected entity changes while vis is on
-    if !current_vis_status || 
-       (current_vis_status && current_selected_entity != *last_selected_entity) {
-        if *last_vis_status || (current_selected_entity != *last_selected_entity) {
-            // Only despawn if vis was on before, or if selection changed
-            for entity in query_text.iter() {
-                commands.entity(entity).despawn();
-            }
+    if (!current_vis_status
+        || (current_vis_status && current_selected_entity != *last_selected_entity))
+        && (*last_vis_status || (current_selected_entity != *last_selected_entity))
+    {
+        // Only despawn if vis was on before, or if selection changed
+        for entity in query_text.iter() {
+            commands.entity(entity).despawn();
         }
     }
     *last_selected_entity = current_selected_entity;

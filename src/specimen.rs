@@ -1,10 +1,9 @@
-use crate::{genome, map_range, neural_network, MEMORY_SIZE, SpatialMap};
+use crate::{MEMORY_SIZE, SpatialMap, genome, map_range, neural_network};
 use bevy::prelude::*;
-use bevy::render::mesh::Mesh2d;
-use bevy::sprite::MeshMaterial2d;
+// Mesh2d and MeshMaterial2d now in prelude
+use crate::settings::Settings;
 use rand::random;
 use std::collections::HashMap;
-use crate::settings::Settings;
 
 #[derive(Component)]
 pub struct Health(pub f32);
@@ -245,9 +244,15 @@ impl SpecimenBundle {
 
         // Determine initial color based on genome
         let genes: Vec<_> = genome.0.genes().collect();
-        let r = genes.get(0).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
-        let g = genes.get(1).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
-        let b = genes.get(2).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let r = genes
+            .first()
+            .map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let g = genes
+            .get(1)
+            .map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let b = genes
+            .get(2)
+            .map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
         let initial_color = Color::srgb(r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0));
 
         // Create material for this specimen
@@ -308,7 +313,6 @@ pub fn spawn_specimen(
     ));
 }
 
-
 #[derive(Component)]
 pub struct Food;
 
@@ -325,15 +329,19 @@ pub fn food_consumption_system(
 ) {
     let mut consumed_food_entities: Vec<Entity> = Vec::new();
 
-    for (_specimen_entity, specimen_position, specimen_size, mut hunger) in specimen_query.iter_mut() {
+    for (_specimen_entity, specimen_position, specimen_size, mut hunger) in
+        specimen_query.iter_mut()
+    {
         let specimen_pos_array = [specimen_position.0.x, specimen_position.0.y];
-        
+
         // Find food within eating range using KdTree
         // The items in KdTree are u64 (Entity bits)
-        let nearby_food_item_bits = spatial_map.food_tree.within_unsorted::<kiddo::SquaredEuclidean>(
-            &specimen_pos_array, 
-            specimen_size.0 * specimen_size.0 // KdTree stores squared distances
-        );
+        let nearby_food_item_bits = spatial_map
+            .food_tree
+            .within_unsorted::<kiddo::SquaredEuclidean>(
+                &specimen_pos_array,
+                specimen_size.0 * specimen_size.0, // KdTree stores squared distances
+            );
 
         if !nearby_food_item_bits.is_empty() {
             // For simplicity, consume the first food item found in range
