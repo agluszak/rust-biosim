@@ -31,7 +31,11 @@ pub struct Settings {
     pub food_restore_amount: f32,  // How much hunger is restored when eating food
     pub max_food_entities: usize,  // Maximum number of food entities in the world
     pub slow_mode: bool,
-    pub last_update: Instant,
+    pub show_food_connections: bool, // Whether to show the debug lines to food
+    pub add_specimens_count: usize, // Number of specimens to add when pressing 'A'
+    pub show_brain_visualization: bool, // Whether to show brain visualization
+    pub brain_vis_window_width: f32, // Width of brain visualization window
+    pub brain_vis_window_height: f32, // Height of brain visualization window
 }
 
 pub const MEMORY_SIZE: usize = 8;
@@ -77,10 +81,10 @@ impl Default for Settings {
         let world_size = 100.0;
 
         Settings {
-            specimen_size: 1.0,
+            specimen_size: 3.0,
             world_size,
             world_half_size: world_size / 2.0,
-            population: 250,
+            population: 400,
             internal_neurons: 30,
             genome_length: 100,
             mutation_chance: 0.01,
@@ -96,15 +100,19 @@ impl Default for Settings {
             rendering_enabled: true,
             old_age: 700, // Age at which specimens start taking damage
             old_age_damage_rate: 0.5, // Increased from 0.1 to make age more impactful
-            max_age: 800, // Maximum age a specimen can live to before forced death
+            max_age: 1200, // Maximum age a specimen can live to before forced death
             corpse_despawn_delay: 30, // Despawn dead specimens after 30 turns
-            hunger_damage_rate: 1.0, // Doubled from 0.5 to make hunger more dangerous
-            hunger_decrease_rate: 2.0, // Hunger decreases by this amount each turn
-            food_spawn_interval: 2, // Food spawns every 100 turns
-            food_restore_amount: 50.0, // Food restores 50 hunger points
-            max_food_entities: 100, // Maximum of 20 food entities in the world
+            hunger_damage_rate: 0.3, // Damage per turn when starving (gentler)
+            hunger_decrease_rate: 0.2, // Hunger decreases slowly - ~8 seconds to starve from full
+            food_spawn_interval: 1, // Food spawns every turn
+            food_restore_amount: 20.0, // Food restores 20 hunger points
+            max_food_entities: 400, // Enough food to support population
             slow_mode: false,
-            last_update: Instant::now(),
+            show_food_connections: false, // Default to not showing food connections
+            add_specimens_count: 100, // Number of specimens to add when pressing 'A'
+            show_brain_visualization: false, // Whether to show brain visualization
+            brain_vis_window_width: 800.0, // Width of brain visualization window
+            brain_vis_window_height: 600.0, // Height of brain visualization window
         }
     }
 }

@@ -1,9 +1,10 @@
-use crate::{MEMORY_SIZE, genome, map_range, neural_network};
+use crate::{genome, map_range, neural_network, MEMORY_SIZE, SpatialMap};
 use bevy::prelude::*;
-use bevy_prototype_lyon::entity::ShapeBundle;
-use bevy_prototype_lyon::prelude::*;
+use bevy::render::mesh::Mesh2d;
+use bevy::sprite::MeshMaterial2d;
 use rand::random;
 use std::collections::HashMap;
+use crate::settings::Settings;
 
 #[derive(Component)]
 pub struct Health(pub f32);
@@ -198,86 +199,159 @@ pub struct SpecimenBundle {
     previous_position: PreviousPosition,
     direction: Direction,
     birthplace: Birthplace,
+    age: Age,
+    health: Health,
+    hunger: Hunger,
     memory: Memory,
     oscillator: Oscillator,
     genome: Genome,
     brain: Brain,
     brain_inputs: BrainInputs,
     brain_outputs: BrainOutputs,
-    health: Health,
-    hunger: Hunger, // Add hunger component
-    alive: Alive,
     size: Size,
-    age: Age,
-    #[bundle()]
-    shape_bundle: ShapeBundle,
-    fill: Fill,
-    stroke: Stroke,
+    alive: Alive,
     simulation_entity: SimulationEntity,
+    original_color: OriginalColor,
+    // Visual components - circle mesh
+    mesh: Mesh2d,
+    material: MeshMaterial2d<ColorMaterial>,
+    transform: Transform,
 }
 
-// Add a marker component for all simulation entities (specimens and food)
+// Component to store the original color of a specimen
 #[derive(Component)]
-pub struct SimulationEntity;
+pub struct OriginalColor(pub Color);
 
 impl SpecimenBundle {
     pub fn new(
         genome: Genome,
-        inputs: &[neural_network::Input],
-        outputs: &[neural_network::Output],
+        brain_inputs_settings: &[neural_network::Input],
+        brain_outputs_settings: &[neural_network::Output],
         internal_neurons: usize,
         position: Position,
+        materials: &mut ResMut<Assets<ColorMaterial>>,
+        settings: &Res<Settings>,
+        circle_mesh: Handle<Mesh>,
     ) -> Self {
-        let speed = SpeedMultiplier::default(); // TODO this is a speed multiplier
-        let previous_position = PreviousPosition(position.0);
-        let birthplace = Birthplace(position.0);
-        let direction = Direction(parry2d::na::Rotation2::new(
-            random::<f32>() * 2.0 * std::f32::consts::PI,
-        ));
-
-        // Set initial size
-        let size = Size(10.0);
-
-        let shape = shapes::Circle {
-            radius: size.0,
-            center: Vec2::new(0.0, 0.0),
-        };
-        let path = GeometryBuilder::build_as(&shape);
-        let shape_bundle = ShapeBundle { path, ..default() };
-        let brain = Brain(neural_network::NeuralNetwork::from_genome(
+        let brain = neural_network::NeuralNetwork::from_genome(
             &genome.0,
-            inputs,
-            outputs,
+            brain_inputs_settings,
+            brain_outputs_settings,
             internal_neurons,
-        ));
-        let brain_inputs = BrainInputs::default();
-        let brain_outputs = BrainOutputs::default();
+        );
+        let initial_previous_position = PreviousPosition(position.0);
+        let initial_birthplace = Birthplace(position.0);
+        let initial_size = settings.specimen_size;
 
-        SpecimenBundle {
-            speed,
+        // Determine initial color based on genome
+        let genes: Vec<_> = genome.0.genes().collect();
+        let r = genes.get(0).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let g = genes.get(1).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let b = genes.get(2).map_or(0.5, |g| g.weight() as f32 / i16::MAX as f32 * 0.5 + 0.5);
+        let initial_color = Color::srgb(r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0));
+
+        // Create material for this specimen
+        let material_handle = materials.add(ColorMaterial::from_color(initial_color));
+
+        // Save position for transform before moving
+        let pos_x = position.0.x;
+        let pos_y = position.0.y;
+
+        Self {
+            speed: SpeedMultiplier::default(),
             position,
-            previous_position,
-            direction,
-            birthplace,
-            memory: Memory([0.0; MEMORY_SIZE]),
-            oscillator: Oscillator([1.0; 3]),
-            genome,
-            brain,
-            brain_inputs,
-            brain_outputs,
+            previous_position: initial_previous_position,
+            direction: Direction::default(),
+            birthplace: initial_birthplace,
+            age: Age(0),
             health: Health(100.0),
-            hunger: Hunger(100.0), // Start with full belly
+            hunger: Hunger(100.0),
+            memory: Memory([0.0; MEMORY_SIZE]),
+            oscillator: Oscillator([0.0; 3]),
+            genome,
+            brain: Brain(brain),
+            brain_inputs: BrainInputs::default(),
+            brain_outputs: BrainOutputs::default(),
+            size: Size(initial_size),
             alive: Alive,
-            size,
-            age: Age(0), // Starting age is 0
-            shape_bundle,
-            fill: Fill::color(Color::srgb(random(), random(), random())),
-            stroke: Stroke::new(Color::BLACK, 1.0),
             simulation_entity: SimulationEntity,
+            original_color: OriginalColor(initial_color),
+            mesh: Mesh2d(circle_mesh),
+            material: MeshMaterial2d(material_handle),
+            transform: Transform::from_translation(Vec3::new(pos_x, pos_y, 0.0))
+                .with_scale(Vec3::splat(initial_size)), // Scale the unit circle
         }
     }
 }
 
-// Add a component to mark food entities
+// Function to spawn a specimen entity with all its components, including visual representation.
+pub fn spawn_specimen(
+    commands: &mut Commands,
+    genome: Genome,
+    brain_inputs_settings: &[neural_network::Input],
+    brain_outputs_settings: &[neural_network::Output],
+    internal_neurons: usize,
+    position: Position,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    settings: &Res<Settings>,
+    circle_mesh: Handle<Mesh>,
+) {
+    commands.spawn(SpecimenBundle::new(
+        genome,
+        brain_inputs_settings,
+        brain_outputs_settings,
+        internal_neurons,
+        position,
+        materials,
+        settings,
+        circle_mesh,
+    ));
+}
+
+
 #[derive(Component)]
 pub struct Food;
+
+#[derive(Component)]
+pub struct SimulationEntity; // Marker component for all simulation entities
+
+// System to consume food and restore hunger
+pub fn food_consumption_system(
+    mut commands: Commands,
+    mut specimen_query: Query<(Entity, &Position, &Size, &mut Hunger), With<Alive>>,
+    food_query: Query<(Entity, &Position), With<Food>>,
+    spatial_map: Res<SpatialMap>,
+    settings: Res<Settings>,
+) {
+    let mut consumed_food_entities: Vec<Entity> = Vec::new();
+
+    for (_specimen_entity, specimen_position, specimen_size, mut hunger) in specimen_query.iter_mut() {
+        let specimen_pos_array = [specimen_position.0.x, specimen_position.0.y];
+        
+        // Find food within eating range using KdTree
+        // The items in KdTree are u64 (Entity bits)
+        let nearby_food_item_bits = spatial_map.food_tree.within_unsorted::<kiddo::SquaredEuclidean>(
+            &specimen_pos_array, 
+            specimen_size.0 * specimen_size.0 // KdTree stores squared distances
+        );
+
+        if !nearby_food_item_bits.is_empty() {
+            // For simplicity, consume the first food item found in range
+            // A more complex logic could choose the closest or based on other criteria
+            let food_to_consume_bits = nearby_food_item_bits[0].item;
+            let food_entity_to_consume = Entity::from_bits(food_to_consume_bits);
+
+            // Check if this food item has already been consumed in this tick by another specimen
+            if !consumed_food_entities.contains(&food_entity_to_consume) {
+                // Check if the entity actually exists and is food (optional, but good for safety)
+                if food_query.get(food_entity_to_consume).is_ok() {
+                    hunger.0 = (hunger.0 + settings.food_restore_amount).min(100.0);
+                    consumed_food_entities.push(food_entity_to_consume);
+                    // Despawn the food item immediately after one specimen consumes it
+                    commands.entity(food_entity_to_consume).despawn();
+                }
+            }
+        }
+    }
+    // Despawning is now handled inside the loop to prevent multiple consumptions in one tick.
+}

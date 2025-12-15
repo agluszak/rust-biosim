@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use variant_count::VariantCount;
 
@@ -162,6 +162,7 @@ impl NeuralNetwork {
         let mut io_weights: HashMap<(usize, usize), f32> = HashMap::new();
         let mut ii_weights: HashMap<(usize, usize), f32> = HashMap::new();
         let mut oi_weights: HashMap<(usize, usize), f32> = HashMap::new();
+        let mut internal_internal_weights: HashMap<(usize, usize), f32> = HashMap::new();
 
         // Process genes and accumulate weights
         for gene in genome.genes() {
@@ -190,7 +191,7 @@ impl NeuralNetwork {
                     // Internal to internal
                     let from_idx = gene.input_index() % internal_neurons_count;
                     let to_idx = gene.output_index() % internal_neurons_count;
-                    // Handled separately below
+                    *internal_internal_weights.entry((from_idx, to_idx)).or_insert(0.0) += weight;
                 }
             }
         }
@@ -212,26 +213,19 @@ impl NeuralNetwork {
         let mut adjacency_list: Vec<Vec<(usize, f32)>> = vec![Vec::new(); internal_neurons_count];
         let mut self_weights: Vec<f32> = vec![0.0; internal_neurons_count];
 
-        // Process internal-to-internal connections
-        for gene in genome.genes() {
-            if gene.is_from_internal() && gene.is_to_internal() {
-                let from_idx = gene.input_index() % internal_neurons_count;
-                let to_idx = gene.output_index() % internal_neurons_count;
-                let weight = gene.weight() as isize as f32 / MAX_WEIGHT;
-
-                if from_idx == to_idx {
-                    // Self-connection
-                    self_weights[from_idx] += weight;
-                } else {
-                    // Connection to another neuron
-                    adjacency_list[to_idx].push((from_idx, weight));
-                }
+        // Process internal-to-internal connections from the accumulated weights
+        for ((from_idx, to_idx), weight) in internal_internal_weights {
+            if from_idx == to_idx {
+                // Self-connection
+                self_weights[from_idx] += weight;
+            } else {
+                // Connection to another neuron
+                adjacency_list[to_idx].push((from_idx, weight));
             }
         }
 
         // Calculate the topological order for execution
-        let computation_order =
-            Self::compute_topological_order(&adjacency_list, internal_neurons_count);
+        let computation_order = Self::compute_topological_order(&adjacency_list, internal_neurons_count);
 
         // Create the neural network
         NeuralNetwork {
@@ -290,5 +284,23 @@ impl NeuralNetwork {
         }
 
         result
+    }
+
+    // Add public methods to access internal fields safely
+    // Public methods to access internal data for visualization
+    pub fn get_neuron_values(&self) -> &Vec<f32> {
+        &self.neuron_values
+    }
+    
+    pub fn get_input_to_internal(&self) -> &Vec<(usize, usize, f32)> {
+        &self.input_to_internal
+    }
+    
+    pub fn get_internal_to_output(&self) -> &Vec<(usize, usize, f32)> {
+        &self.internal_to_output
+    }
+    
+    pub fn get_input_to_output(&self) -> &Vec<(usize, usize, f32)> {
+        &self.input_to_output
     }
 }

@@ -1,20 +1,45 @@
+// System to handle closing of the brain visualization window
+use bevy::window::WindowClosed;
+
+fn handle_brain_vis_window_closed(
+    mut window_closed_events: EventReader<WindowClosed>,
+    windows: Query<(Entity, &Window), With<BrainVisWindowMarker>>,
+    mut settings: ResMut<Settings>,
+) {
+    for event in window_closed_events.read() {
+        for (entity, _window) in windows.iter() {
+            if event.window == entity {
+                // When the brain vis window is closed, disable the visualization
+                settings.show_brain_visualization = false;
+                println!("Brain visualization window closed, simulation paused or visualization disabled.");
+            }
+        }
+    }
+}
 mod genome;
 mod neural_network;
 mod settings;
 mod specimen;
+mod brain_vis;
 
 use crate::settings::{MEMORY_SIZE, Settings};
 use crate::specimen::{
-    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, DeathTurn, Direction, Food, Genome,
-    Health, Hunger, Memory, NeuronValue, NeuronValueConvertible, Oscillator, Position,
-    PreviousPosition, SimulationEntity, Size, SpecimenBundle, SpeedMultiplier,
+    Age, Alive, Birthplace, Brain, BrainInputs, BrainOutputs, DeathTurn, Direction, Food, Genome, Health, 
+    Hunger, Memory, NeuronValue, NeuronValueConvertible, Oscillator, Position, PreviousPosition, 
+    SimulationEntity, Size, SpecimenBundle, SpeedMultiplier, OriginalColor, food_consumption_system // Added food_consumption_system
+};
+use crate::brain_vis::{
+    BrainVisData, SelectedSpecimenResource, select_specimen_system, toggle_brain_vis_system,
+    update_brain_vis_data, render_brain_visualization_system, cleanup_brain_vis_text_system // Corrected to render_brain_visualization_system
 };
 use bevy::DefaultPlugins;
-use bevy::app::{App, Startup, Update};
+use bevy::app::{App, Startup, Update, FixedUpdate};
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
+use bevy::sprite::MeshMaterial2d;
 use bevy::window::PresentMode;
-use bevy_prototype_lyon::prelude::*;
+// Removed: use bevy_prototype_lyon::prelude::*;
+use bevy_vector_shapes::prelude::*; // Added
 use parry2d::na::{Point2, Rotation2, Vector2, distance};
 use rand::random;
 use rand::seq::IteratorRandom;
@@ -23,10 +48,17 @@ use kiddo::float::kdtree::KdTree;
 use kiddo::SquaredEuclidean;
 
 // Define the KdTree type we'll use
+// Bucket size of 256 to handle large populations
 #[derive(Resource)]
 struct SpatialMap {
-    food_tree: KdTree<f32, u64, 2, 128, u32>,      // KdTree for food positions
-    specimen_tree: KdTree<f32, u64, 2, 128, u32>,  // KdTree for specimen positions
+    food_tree: KdTree<f32, u64, 2, 256, u32>,      // KdTree for food positions
+    specimen_tree: KdTree<f32, u64, 2, 256, u32>,  // KdTree for specimen positions
+}
+
+// Shared mesh handles for rendering
+#[derive(Resource)]
+struct SharedMeshes {
+    circle: Handle<Mesh>,
 }
 
 impl Default for SpatialMap {
@@ -62,51 +94,153 @@ fn update_timestamp(mut last_update: ResMut<LastUpdateTime>) {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Turbo Evolution Giga Simulator".to_string(),
-                resolution: (550., 550.).into(),
-                present_mode: PresentMode::Immediate,
-                ..default()
-            }),
-            ..default()
-        }))
-        .add_plugins(ShapePlugin)
+        .add_plugins(DefaultPlugins)
+        .add_plugins(Shape2dPlugin::default())
+        .insert_resource(ClearColor(Color::srgb(0.9, 0.9, 0.9)))
+        .insert_resource(Settings::default())
+        .insert_resource(Turn(0))
+        .insert_resource(Generation(0))
+        .insert_resource(GenerationStartTime(Instant::now()))
+        .insert_resource(SelectedSpecimenResource::default())
+        .insert_resource(BrainVisData::default())
+        .insert_resource(SpatialMap::default())
+        .insert_resource(Time::<Fixed>::from_hz(60.0)) // 60 simulation ticks per second
+        .add_systems(Startup, setup_app)
+        // Simulation systems run at fixed timestep - ORDER MATTERS
         .add_systems(
-            Startup,
-            (setup_system, first_generation_system.after(setup_system)),
+            FixedUpdate,
+            (
+                time_system,                      // 1. Increment turn, age specimens
+                update_spatial_map,               // 2. Rebuild KdTree for spatial queries
+                food_detection_system_kdtree,     // 3. Detect food proximity for brain input
+                brain_input_collection_system,    // 4. Gather all sensor data for brains
+                thinking_system,                  // 5. Run neural networks
+                doing_system,                     // 6. Execute brain outputs (set WantsToMove, etc.)
+                movement_system,                  // 7. Apply movement to entities with WantsToMove
+                food_consumption_system,          // 8. Eat nearby food
+                hunger_system,                    // 9. Decrease hunger, apply starvation damage
+                damage_system,                    // 10. Apply age-related damage
+                aging_system,                     // 11. Visual age effects (size/color)
+                death_system,                     // 12. Kill specimens with 0 health
+                mating_system,                    // 13. Reproduction for healthy specimens
+                food_spawn_system,                // 14. Spawn new food
+                corpse_despawn_system,            // 15. Remove old corpses
+            ),
         )
-        .init_resource::<SpatialMap>() // Initialize the KdTree resource
-        .init_resource::<LastUpdateTime>() // Initialize the LastUpdateTime resource
-        .add_systems(Update, render_toggle_system)
-        .add_systems(Update, slow_mode_toggle_system)
-        // Visual systems run always
-        .add_systems(Update, display_system.run_if(rendering_enabled))
-        .add_systems(Update, text_update_system.run_if(rendering_enabled))
-        .add_systems(Update, transparency_system.run_if(rendering_enabled))
-        // Simulation systems run based on should_update_simulation
+        // Display/UI systems run every frame
         .add_systems(
             Update,
             (
-                aging_system,
-                movement_system,
-                update_spatial_map,
-                brain_input_collection_system,
-                thinking_system,
-                doing_system,
-                time_system,
-                food_spawn_system,
-                hunger_system,
-                food_detection_system_kdtree,
-                food_consumption_system_kdtree,
-                (damage_system, death_system, mating_system).chain(),
-                corpse_despawn_system,
-                update_timestamp,
-            ).chain().run_if(should_update_simulation)
+                (transparency_system).run_if(rendering_enabled),
+                display_system,
+                select_specimen_system,
+                toggle_brain_vis_system,
+                update_brain_vis_data,
+                render_brain_visualization_system,
+                cleanup_brain_vis_text_system,
+                draw_food_connections,
+            ),
         )
-        // Control systems run always
-        .add_systems(Update, restart_system) // Add system to restart the simulation
+        .add_systems(
+            Update,
+            (
+                add_specimens_system,
+                render_toggle_system,
+                slow_mode_toggle_system,
+                toggle_food_connections_system,
+                restart_system,
+                camera_control_system,
+            ),
+        )
         .run();
+}
+
+fn setup_app(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    // Spawn camera with initial zoom to see the world (100x100 units)
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scale: 0.5, // Start zoomed out to see more of the world
+            ..OrthographicProjection::default_2d()
+        }),
+    ));
+
+    // Create shared circle mesh for all specimens
+    let circle_mesh = meshes.add(Circle::new(1.0)); // Unit circle, scaled per specimen
+    commands.insert_resource(SharedMeshes { circle: circle_mesh.clone() });
+
+    first_generation_system(commands, settings, materials, circle_mesh);
+}
+
+// Camera control system - zoom with scroll, pan with middle mouse or arrow keys
+fn camera_control_system(
+    mut query: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    mut scroll_events: EventReader<bevy::input::mouse::MouseWheel>,
+    windows: Query<&Window>,
+    time: Res<Time>,
+) {
+    let Ok((mut transform, mut projection)) = query.single_mut() else { return };
+
+    // Extract the orthographic projection scale
+    let Projection::Orthographic(ortho) = projection.as_mut() else { return };
+    let scale = ortho.scale;
+
+    // Zoom with mouse scroll
+    for event in scroll_events.read() {
+        let zoom_factor = 1.0 - event.y * 0.1;
+        ortho.scale = (ortho.scale * zoom_factor).clamp(0.01, 5.0);
+    }
+
+    // Zoom with +/- keys
+    if keyboard_input.pressed(KeyCode::Equal) || keyboard_input.pressed(KeyCode::NumpadAdd) {
+        ortho.scale = (ortho.scale * 0.98).clamp(0.01, 5.0);
+    }
+    if keyboard_input.pressed(KeyCode::Minus) || keyboard_input.pressed(KeyCode::NumpadSubtract) {
+        ortho.scale = (ortho.scale * 1.02).clamp(0.01, 5.0);
+    }
+
+    // Pan with arrow keys or WASD
+    let pan_speed = 50.0 * scale * time.delta_secs();
+    if keyboard_input.pressed(KeyCode::ArrowLeft) || keyboard_input.pressed(KeyCode::KeyA) && !keyboard_input.just_pressed(KeyCode::KeyA) {
+        transform.translation.x -= pan_speed;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowRight) || keyboard_input.pressed(KeyCode::KeyD) {
+        transform.translation.x += pan_speed;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowUp) || keyboard_input.pressed(KeyCode::KeyW) {
+        transform.translation.y += pan_speed;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowDown) || keyboard_input.pressed(KeyCode::KeyS) && !keyboard_input.just_pressed(KeyCode::KeyS) {
+        transform.translation.y -= pan_speed;
+    }
+
+    // Pan with middle mouse drag
+    if mouse_input.pressed(MouseButton::Middle) {
+        if let Ok(window) = windows.single() {
+            if let Some(_cursor) = window.cursor_position() {
+                // Simple pan - move in direction of cursor offset from center
+                let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+                if let Some(cursor) = window.cursor_position() {
+                    let offset = (cursor - center) * 0.001 * scale;
+                    transform.translation.x += offset.x;
+                    transform.translation.y -= offset.y; // Y is inverted in screen coords
+                }
+            }
+        }
+    }
+
+    // Reset camera position with Home key
+    if keyboard_input.just_pressed(KeyCode::Home) {
+        transform.translation = Vec3::ZERO;
+        ortho.scale = 0.5;
+    }
 }
 
 // Check if rendering is enabled
@@ -135,6 +269,20 @@ fn slow_mode_toggle_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settin
         println!(
             "Slow mode {}",
             if settings.slow_mode {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+}
+
+fn toggle_food_connections_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>) {
+    if keyboard_input.just_pressed(KeyCode::KeyF) {
+        settings.show_food_connections = !settings.show_food_connections;
+        println!(
+            "Food connections {}",
+            if settings.show_food_connections {
                 "enabled"
             } else {
                 "disabled"
@@ -286,35 +434,43 @@ fn time_system(
 
 // Updated aging system - no longer modifies speed
 fn aging_system(
-    mut query: Query<(&Age, &mut Path, &mut Size), With<Alive>>,
+    mut query: Query<(&Age, &mut Transform, &mut Size, &OriginalColor, &MeshMaterial2d<ColorMaterial>), With<Alive>>,
     settings: Res<Settings>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    for (age, mut path, mut size) in query.iter_mut() {
+    for (age, mut transform, mut size, original_color, material_handle) in query.iter_mut() {
         // Ensure age is within expected bounds
         let safe_age = age.0.min(settings.max_age);
 
         // Age affects size - specimens grow a bit with age, then shrink when very old
         let relative_age = safe_age as f32 / settings.max_age as f32;
         let size_factor = if relative_age < 0.3 {
-            // Young specimens grow
+            // Young specimens grow from 0.7 to 1.0
             map_range(relative_age, 0.0, 0.3, 0.7, 1.0)
         } else if relative_age > 0.7 {
-            // Very old specimens shrink
-            1.0 - map_range(relative_age, 0.7, 1.0, 0.6, 1.0)
+            // Very old specimens shrink from 1.0 to 0.4
+            // map_range requires to_min <= to_max, so we invert: map 0.7-1.0 to 0.4-1.0, then invert
+            1.4 - map_range(relative_age, 0.7, 1.0, 0.4, 1.0)
         } else {
             // Middle-aged specimens maintain size
             1.0
         };
 
         // Update the size component with bounds checking
-        size.0 = 10.0 * size_factor;
+        size.0 = settings.specimen_size * size_factor;
+        // Scale the mesh (unit circle scaled to desired size)
+        transform.scale = Vec3::splat(size.0);
 
-        // Update the visual representation
-        let shape = shapes::Circle {
-            radius: size.0,
-            center: Vec2::new(0.0, 0.0),
-        };
-        *path = GeometryBuilder::build_as(&shape);
+        // Optionally, change color with age (e.g., fade slightly)
+        let mut new_color = original_color.0;
+        if relative_age > 0.7 { // Older specimens might fade
+            let fade_factor = map_range(relative_age, 0.7, 1.0, 1.0, 0.5);
+            new_color = new_color.with_alpha(new_color.alpha() * fade_factor);
+        }
+        // Update material color
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.color = new_color;
+        }
     }
 }
 
@@ -420,16 +576,9 @@ fn text_update_system(
     }
 }
 
-const DISPLAY_SCALE: f32 = 5.0;
-
-fn display_system(_turn: Res<Turn>, mut query: Query<(&Position, &mut Transform)>) {
+fn display_system(_turn: Res<Turn>, mut query: Query<(&Position, &mut Transform), Without<Camera2d>>) {
     for (position, mut transform) in query.iter_mut() {
-        // TODO scale
-        transform.translation = Vec3::new(
-            position.0.x * DISPLAY_SCALE,
-            position.0.y * DISPLAY_SCALE,
-            0.0,
-        );
+        transform.translation = Vec3::new(position.0.x, position.0.y, transform.translation.z);
     }
 }
 
@@ -459,7 +608,12 @@ fn setup_system(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
-fn first_generation_system(mut commands: Commands, settings: Res<Settings>) {
+fn first_generation_system(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    circle_mesh: Handle<Mesh>,
+) {
     info!("First generation");
     // Initialize the first generation with random genomes
     for _ in 0..settings.population {
@@ -471,6 +625,9 @@ fn first_generation_system(mut commands: Commands, settings: Res<Settings>) {
             &settings.brain_outputs,
             settings.internal_neurons,
             position,
+            &mut materials,
+            &settings,
+            circle_mesh.clone(),
         ));
     }
 }
@@ -507,24 +664,34 @@ fn death_system(
     }
 }
 
-fn transparency_system(mut query: Query<(&Health, &mut Fill, &mut Stroke, Option<&Alive>)>) {
-    for (health, mut fill, mut stroke, alive) in query.iter_mut() {
-        match alive {
-            Some(_) => {
-                let health_value = health.0.clamp(0.0, 100.0);
-                let alpha = health_value / 100.0;
-                let previous_color = fill.color.to_srgba();
-                *fill = Fill::color(Color::srgba(
-                    previous_color.red,
-                    previous_color.green,
-                    previous_color.blue,
-                    alpha,
-                ));
-                *stroke = Stroke::new(Color::BLACK, 1.0);
-            }
-            None => {
-                *fill = Fill::color(Color::NONE);
-                *stroke = Stroke::new(Color::BLACK, 2.0);
+fn transparency_system(
+    query: Query<(&Health, &MeshMaterial2d<ColorMaterial>, Option<&Alive>)>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (health, material_handle, alive) in query.iter() {
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            match alive {
+                Some(_) => {
+                    let health_value = health.0.clamp(0.0, 100.0);
+                    let alpha = health_value / 100.0;
+                    // Preserve original RGB, only change alpha
+                    let original_rgb = material.color.to_srgba();
+                    material.color = Color::srgba(
+                        original_rgb.red,
+                        original_rgb.green,
+                        original_rgb.blue,
+                        alpha,
+                    );
+                }
+                None => { // Dead, make it mostly transparent but slightly visible
+                    let original_srgba = material.color.to_srgba();
+                    material.color = Color::srgba(
+                        original_srgba.red * 0.3, // Darken the color
+                        original_srgba.green * 0.3,
+                        original_srgba.blue * 0.3,
+                        0.1, // Very low alpha
+                    );
+                }
             }
         }
     }
@@ -533,28 +700,49 @@ fn transparency_system(mut query: Query<(&Health, &mut Fill, &mut Stroke, Option
 fn mating_system(
     mut commands: Commands,
     settings: Res<Settings>,
-    alive: Query<(Entity, &Position, &Genome, &Age), With<Alive>>,
+    alive: Query<(Entity, &Position, &Genome, &Age, &Health, &Hunger), With<Alive>>,
     _turn: Res<Turn>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    shared_meshes: Res<SharedMeshes>,
 ) {
     // Collect all living specimens
-    let specimens: Vec<(Entity, &Position, &Genome, &Age)> = alive.iter().collect();
+    let specimens: Vec<_> = alive.iter().collect();
     if specimens.is_empty() {
         return;
     }
 
+    // Population cap to prevent KdTree overflow and maintain performance
+    const MAX_POPULATION: usize = 2000;
+    if specimens.len() >= MAX_POPULATION {
+        return; // Don't reproduce if at capacity
+    }
+
     // For each specimen, check if it's time to mate based on its age
-    for (entity_a, pos_a, genome_a, age_a) in &specimens {
+    for (entity_a, pos_a, genome_a, age_a, health_a, hunger_a) in &specimens {
         // Check if the specimen has reached a mating age (every 150 turns)
         if age_a.0 % 150 == 0 && age_a.0 > 0 {
-            // Choose a random mating partner from the living specimens
-            if let Some((_entity_b, pos_b, genome_b, _)) = specimens
+            // NATURAL SELECTION: Only healthy, well-fed specimens can reproduce
+            // Require health > 60% and hunger > 40%
+            if health_a.0 < 60.0 || hunger_a.0 < 40.0 {
+                continue; // Too weak or hungry to reproduce
+            }
+
+            // Choose a random healthy mating partner
+            if let Some((_entity_b, pos_b, genome_b, _, _, _)) = specimens
                 .iter()
-                .filter(|(e, _, _, _)| e != entity_a) // Don't mate with self
+                .filter(|(e, _, _, _, health, hunger)| {
+                    *e != *entity_a && health.0 >= 60.0 && hunger.0 >= 40.0
+                })
                 .choose(&mut rand::rng())
             {
-                // Create new specimen at midpoint between parents
-                let new_x = (pos_a.0.x + pos_b.0.x) / 2.0;
-                let new_y = (pos_a.0.y + pos_b.0.y) / 2.0;
+                // Create new specimen near midpoint between parents with some randomness
+                let midpoint_x = (pos_a.0.x + pos_b.0.x) / 2.0;
+                let midpoint_y = (pos_a.0.y + pos_b.0.y) / 2.0;
+                // Add random offset to prevent KdTree bucket overflow
+                let offset_x: f32 = (random::<f32>() - 0.5) * 5.0;
+                let offset_y: f32 = (random::<f32>() - 0.5) * 5.0;
+                let new_x = (midpoint_x + offset_x).clamp(-settings.world_half_size, settings.world_half_size);
+                let new_y = (midpoint_y + offset_y).clamp(-settings.world_half_size, settings.world_half_size);
                 let new_position = Position(Point2::new(new_x, new_y));
 
                 // Crossover and mutate the genomes
@@ -568,6 +756,9 @@ fn mating_system(
                     &settings.brain_outputs,
                     settings.internal_neurons,
                     new_position,
+                    &mut materials,
+                    &settings,
+                    shared_meshes.circle.clone(),
                 ));
             }
         }
@@ -603,6 +794,7 @@ fn food_spawn_system(
     turn: Res<Turn>,
     settings: Res<Settings>,
     food_query: Query<Entity, With<Food>>,
+    mut materials: ResMut<Assets<ColorMaterial>>, // Added
 ) {
     // Only spawn food at the specified interval
     if turn.0 % settings.food_spawn_interval != 0 {
@@ -618,22 +810,22 @@ fn food_spawn_system(
     // Spawn food at random position
     let food_position = Position::random(&settings);
 
-    // Create food shape as a green rectangle
-    let food_size = 5.0;
-    let shape = shapes::Rectangle {
-        extents: Vec2::new(food_size, food_size),
-        ..default()
-    };
+    // Create food shape as a greenish square
+    let food_size = 1.5; // Size in world units
+
+    // Save position values before moving
+    let food_x = food_position.0.x;
+    let food_y = food_position.0.y;
 
     commands.spawn((
         Food,
         food_position,
-        ShapeBundle {
-            path: GeometryBuilder::build_as(&shape),
+        Sprite {
+            color: Color::srgb(0.1, 0.7, 0.1), // Greenish food
+            custom_size: Some(Vec2::splat(food_size)),
             ..default()
         },
-        Fill::color(Color::srgb(0f32, 1f32, 0f32)),
-        Stroke::new(Color::BLACK, 1.0),
+        Transform::from_translation(Vec3::new(food_x, food_y, 0.0)),
         SimulationEntity,
     ));
 }
@@ -668,13 +860,13 @@ fn update_spatial_map(
     // Add all specimens to the tree
     for (entity, position) in specimen_query.iter() {
         let pos = [position.0.x, position.0.y];
-        spatial_map.specimen_tree.add(&pos, entity.index() as u64);
+        spatial_map.specimen_tree.add(&pos, entity.to_bits());
     }
     
     // Add all food items to the tree
     for (entity, position) in food_query.iter() {
         let pos = [position.0.x, position.0.y];
-        spatial_map.food_tree.add(&pos, entity.index() as u64);
+        spatial_map.food_tree.add(&pos, entity.to_bits());
     }
 }
 
@@ -727,7 +919,7 @@ fn food_consumption_system_kdtree(
         let specimen_pos = [position.0.x, position.0.y];
         
         // Find food within eating range using KdTree
-        let in_range_food = spatial_map.food_tree.within_unsorted::<SquaredEuclidean>(&specimen_pos, size.0 * size.0);
+        let in_range_food = spatial_map.food_tree.within_unsorted::<SquaredEuclidean>(&specimen_pos, size.0);
         
         // Only consume one food item per turn - the closest one
         if !in_range_food.is_empty() && !consumed_food.contains(&in_range_food[0].item) {
@@ -740,14 +932,10 @@ fn food_consumption_system_kdtree(
     }
     
     // Despawn all consumed food items
-    for food_idx in consumed_food {
-        // Convert the index back to an Entity
-        for (entity, _) in food_query.iter() {
-            if entity.index() as u64 == food_idx {
-                commands.entity(entity).despawn();
-                break;
-            }
-        }
+    for food_bits in consumed_food {
+        // Convert the bits back to an Entity and despawn it
+        let entity = Entity::from_bits(food_bits);
+        commands.entity(entity).despawn();
     }
 }
 
@@ -759,6 +947,8 @@ fn restart_system(
     mut generation_start: ResMut<GenerationStartTime>,
     settings: Res<Settings>,
     simulation_entities: Query<Entity, With<SimulationEntity>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    shared_meshes: Res<SharedMeshes>,
 ) {
     if keyboard_input.just_pressed(KeyCode::Space) {
         // Despawn all simulation entities
@@ -772,7 +962,132 @@ fn restart_system(
         generation_start.0 = Instant::now();
 
         // Use first_generation_system to spawn new specimens
-        first_generation_system(commands, settings);
+        first_generation_system(commands, settings, materials, shared_meshes.circle.clone());
     }
 }
+
+// Marker component for line gizmos
+#[derive(Component)]
+struct LineGizmo;
+
+// System to draw lines between specimens and their nearest food
+fn draw_food_connections(
+    mut painter: ShapePainter, 
+    specimen_query: Query<&Position, With<Alive>>,
+    food_query: Query<(Entity, &Position), With<Food>>,
+    spatial_map: Res<SpatialMap>,
+    settings: Res<Settings>,
+) {
+    // Removed: Despawn all existing line gizmos
+
+    // Only draw connections if the setting is enabled
+    if !settings.show_food_connections {
+        return;
+    }
+
+    painter.set_translation(Vec3::ZERO); 
+    painter.thickness = 1.5;
+    painter.color = Color::srgba(1.0, 0.5, 0.0, 0.5); // Corrected to srgba
+
+    for specimen_position in specimen_query.iter() {
+        let specimen_pos = Vec2::new(specimen_position.0.x, specimen_position.0.y);
+
+        // Find the closest food using the KdTree
+        let nearest = spatial_map.food_tree.nearest_n::<SquaredEuclidean>(&[specimen_position.0.x, specimen_position.0.y], 1);
+
+        if !nearest.is_empty() {
+            let food_entity_bits = nearest[0].item;
+
+            // Find the matching food entity by comparing entity bits
+            for (food_entity, food_pos_data) in food_query.iter() {
+                if food_entity.to_bits() == food_entity_bits {
+                    let food_pos = Vec2::new(food_pos_data.0.x, food_pos_data.0.y);
+                    painter.line(specimen_pos.extend(0.0), food_pos.extend(0.0));
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Add new specimens when 'A' is pressed
+fn add_specimens_system(
+    mut commands: Commands,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    settings: Res<Settings>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    shared_meshes: Res<SharedMeshes>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyA) {
+        println!("Adding {} new specimens", settings.add_specimens_count);
+
+        // Spawn the configured number of new specimens with random genomes
+        for _ in 0..settings.add_specimens_count {
+            let genome = genome::Genome::random(settings.genome_length);
+            let position = Position::random(&settings);
+            commands.spawn(SpecimenBundle::new(
+                Genome(genome),
+                &settings.brain_inputs,
+                &settings.brain_outputs,
+                settings.internal_neurons,
+                position,
+                &mut materials,
+                &settings,
+                shared_meshes.circle.clone(),
+            ));
+        }
+    }
+}
+
+// System to update the visibility of the brain visualization window
+fn update_brain_vis_window_visibility(
+    mut windows: Query<&mut Window>,
+    settings: Res<Settings>,
+    selected: Res<SelectedSpecimenResource>,
+) {
+    // Get the second window (brain visualization window)
+    if let Some(mut window) = windows.iter_mut().nth(1) {
+        // Show window only if brain visualization is enabled and a specimen is selected
+        window.visible = settings.show_brain_visualization && selected.entity.is_some();
+    }
+}
+
+// Create a separate window for brain visualization
+fn create_brain_vis_window(
+    mut commands: Commands,
+    settings: Res<Settings>,
+) {
+    // Create a new window for brain visualization
+    let window_entity = commands.spawn((
+        Window {
+            title: "Brain Visualization".to_string(),
+            resolution: (settings.brain_vis_window_width, settings.brain_vis_window_height).into(),
+            present_mode: PresentMode::Immediate,
+            visible: false, // Initially hidden until a specimen is selected
+            ..default()
+        },
+        BrainVisWindowMarker,
+    )).id();
+
+    // Add a dedicated camera for the brain visualization window, targeting the new window
+    use bevy::window::WindowRef;
+    use bevy::render::camera::RenderTarget;
+    use bevy::prelude::{Camera, Camera2d};
+    commands.spawn((
+        Camera2d,
+        Camera {
+            target: RenderTarget::Window(WindowRef::Entity(window_entity)),
+            ..default()
+        },
+        BrainVisCamera,
+    ));
+}
+
+// Marker component for the brain visualization window
+#[derive(Component)]
+struct BrainVisWindowMarker;
+
+// Component to mark the brain visualization camera
+#[derive(Component)]
+struct BrainVisCamera;
 
